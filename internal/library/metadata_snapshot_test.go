@@ -115,7 +115,7 @@ func TestRescanSchedulesOnlyChangedOrIncompleteMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "another root snapshot", jobs: 1, change: func(t *testing.T, f *completedScanFixture) {
+		{name: "snapshot published by another root", change: func(t *testing.T, f *completedScanFixture) {
 			f.snapshot.DirectoryID = "other-root"
 			f.movie.Update().SetMetadataSnapshot(f.snapshot).ExecX(t.Context())
 		}},

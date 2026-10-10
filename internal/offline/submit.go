@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
+
 	"strings"
 
 	"github.com/ppxb/miyabi/internal/domain"
@@ -98,8 +98,7 @@ func (service *Service) remoteHasVideo(ctx context.Context, sess drive.Session, 
 	if err != nil {
 		return false, fmt.Errorf("check existing 115 resource: %w", err)
 	}
-	source := sess.Source()
-	if !drive.WithinSource(info, source) {
+	if !sess.Contains(info) {
 		return false, domain.E(domain.KindConflict, "该磁力的资源已在媒体目录之外，请先在 115 中移动资源", nil)
 	}
 	if !info.IsDirectory {
@@ -113,7 +112,7 @@ func (service *Service) remoteHasVideo(ctx context.Context, sess drive.Session, 
 		err := drive.WalkFilePages(ctx, func(offset int) (pan.FilePage, error) {
 			return sess.List(ctx, dirID, offset)
 		}, func(page pan.FilePage) (bool, error) {
-			if !slices.ContainsFunc(page.Path, func(dir pan.Directory) bool { return dir.ID == source.Directory.ID }) {
+			if !sess.Contains(pan.FileInfo{File: pan.File{ID: dirID}, Path: page.Path}) {
 				return false, domain.E(domain.KindNotFound, "下载目录已移出媒体目录", nil)
 			}
 			for _, entry := range page.Files {

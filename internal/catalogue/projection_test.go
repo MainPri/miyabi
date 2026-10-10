@@ -11,7 +11,7 @@ type unexpectedLocalState struct {
 	t *testing.T
 }
 
-func (s unexpectedLocalState) Source() *domain.LibrarySource {
+func (s unexpectedLocalState) Sources() []domain.LibrarySource {
 	s.t.Fatal("catalogue metadata requested local state")
 	return nil
 }

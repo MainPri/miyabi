@@ -17,8 +17,8 @@ type notificationScanLibrary struct {
 	err error
 }
 
-func (s *notificationScanLibrary) StartScan(context.Context) (domain.TaskInfo, error) {
-	return domain.TaskInfo{ID: 1, Type: "scan", Status: "queued"}, s.err
+func (s *notificationScanLibrary) StartScan(context.Context, string) ([]domain.TaskInfo, error) {
+	return []domain.TaskInfo{{ID: 1, Type: "scan", Status: "queued"}}, s.err
 }
 
 func TestManualScansRetryEmbyEvenWhenLibraryScanCannotStart(t *testing.T) {

@@ -99,7 +99,7 @@ func TestOfflineStartedSubmissionKeepsOriginalSourceAfterCancellation(t *testing
 	for _, action := range []string{"disconnect", "directory"} {
 		t.Run(action, func(t *testing.T) {
 			service, client := offlineAddFixture(t)
-			source := *service.drive.Source()
+			source := service.drive.Sources()[0]
 			started := make(chan context.Context, 1)
 			hold, release := panTestGate(t)
 			client.addOffline = func(ctx context.Context, _, _, directory string) (string, error) {
@@ -276,7 +276,7 @@ func TestOfflineDuplicateHistoryPreservesRedownloadBehavior(t *testing.T) {
 func TestOfflinePlayableProcessingStillDeduplicatesUntilWorkflowFinishes(t *testing.T) {
 	service, client := offlineAddFixture(t)
 	ctx := t.Context()
-	source := *service.drive.Source()
+	source := service.drive.Sources()[0]
 	sess, err := service.drive.OpenSource(ctx, source)
 	if err != nil {
 		t.Fatal(err)

@@ -126,7 +126,12 @@ func TestMountChangeDuringRefreshStopsQueuedSourceRequest(t *testing.T) {
 	var requests atomic.Int32
 	finished := make(chan error, 1)
 	go func() {
-		_, err := withPanSourceToken(t.Context(), d, d.snapshot(), func(string) (struct{}, error) {
+		sess, err := d.Open(t.Context())
+		if err != nil {
+			finished <- err
+			return
+		}
+		_, err = withPanSourceToken(t.Context(), d, d.snapshot(), sess.(*sourceSession), func(string) (struct{}, error) {
 			requests.Add(1)
 			return struct{}{}, nil
 		})
@@ -323,7 +328,7 @@ func TestRejectedRefreshClearsOnlyCredentialsAndAllowsRelogin(t *testing.T) {
 	if status, err := d.Account(ctx); err != nil || status.Connected {
 		t.Fatalf("account after rejection=%+v err=%v", status, err)
 	}
-	if directory, found := savedDirectory(t, d); !found || directory != state.directory || d.snapshot().directory != state.directory {
+	if roots, found := savedRoots(t, d); !found || len(roots) != 1 || roots[0] != state.roots[0] || d.snapshot().roots[0] != state.roots[0] {
 		t.Fatal("credential rejection removed the mounted directory")
 	}
 	restarted, err := NewWithClient(ctx, d.database, client)
@@ -341,7 +346,7 @@ func TestRejectedRefreshClearsOnlyCredentialsAndAllowsRelogin(t *testing.T) {
 		t.Fatalf("pending login after rejection=%+v err=%v", status, err)
 	}
 	assertTokens(t, d, want)
-	if status, err := d.Account(ctx); err != nil || !status.Connected || status.Directory == nil || status.Directory.ID != state.directory.ID {
+	if status, err := d.Account(ctx); err != nil || !status.Connected || len(status.Directories) != 1 || status.Directories[0].ID != state.roots[0].ID {
 		t.Fatalf("account after relogin=%+v err=%v", status, err)
 	}
 }

@@ -1,10 +1,11 @@
-import { CloudIcon, LoaderCircleIcon, LogOutIcon, QrCodeIcon, RefreshCwIcon } from 'lucide-react'
+import { CloudIcon, FolderOpenIcon, LoaderCircleIcon, LogOutIcon, QrCodeIcon, RefreshCwIcon } from 'lucide-react'
 
 import { isPanUnauthorized } from '@/api/client'
 import { useDisconnectPan, usePanAccount } from '@/api/pan'
 import { InlineError } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { PanDirectoryDialog } from './pan-directory-dialog'
 import { PanLoginDialog } from './pan-login-dialog'
 import { PanDirectoryRow } from './pan-directory-row'
 import { PanAccountInfo, PanStorageUsage } from './pan-account'
@@ -99,12 +100,23 @@ export function PanSection() {
       ) : null}
       {connected && profile ? (
         <>
-          <PanDirectoryRow
-            key={profile.id}
-            accountID={profile.id}
-            directory={account.data?.directory}
-            disabled={account.isError || disconnect.isPending}
-          />
+          <div className="space-y-3">
+            <SettingRow title="媒体目录" description="选择 115 中的目录作为媒体库扫描范围，可分别添加多个平级目录" inline>
+              <PanDirectoryDialog accountID={profile.id}>
+                <Button type="button" variant="outline" size="icon" disabled={account.isError || disconnect.isPending}>
+                  <FolderOpenIcon className="size-4" />
+                </Button>
+              </PanDirectoryDialog>
+            </SettingRow>
+            {(account.data?.directories ?? []).map(directory => (
+              <PanDirectoryRow
+                key={directory.id}
+                accountID={profile.id}
+                directory={directory}
+                disabled={account.isError || disconnect.isPending}
+              />
+            ))}
+          </div>
           <PanStorageUsage space={profile.space} />
         </>
       ) : null}

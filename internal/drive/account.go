@@ -17,11 +17,11 @@ const (
 	upstreamTimeout = 45 * time.Second
 )
 
-// AccountStatus describes current 115 connection and mounted library directory.
+// AccountStatus describes current 115 connection and mounted library directories.
 type AccountStatus struct {
-	Connected bool                     `json:"connected"`
-	Account   *pan.Account             `json:"account,omitempty"`
-	Directory *domain.LibraryDirectory `json:"directory,omitempty"`
+	Connected   bool                      `json:"connected"`
+	Account     *pan.Account              `json:"account,omitempty"`
+	Directories []domain.LibraryDirectory `json:"directories,omitempty"`
 }
 
 func (d *Drive) verifyAccount(ctx context.Context, state snapshot) (pan.Account, error) {
@@ -127,16 +127,23 @@ func (d *Drive) Account(ctx context.Context) (AccountStatus, error) {
 	if _, err := d.credentials(state); err != nil {
 		return AccountStatus{}, err
 	}
-	if err := d.discardOtherAccountDirectory(ctx, account.ID); err != nil {
+	if err := d.discardOtherAccountRoots(ctx, account.ID); err != nil {
 		return AccountStatus{}, err
 	}
 	status := AccountStatus{Connected: true, Account: &account}
-	directory := d.snapshot().directory
-	if directory.AccountID == account.ID {
-		value := directory.LibraryDirectory
-		status.Directory = &value
+	if _, ok := d.snapshot().primary(account.ID); ok {
+		status.Directories = directoryList(d.snapshot().sources(account.ID))
 	}
 	return status, nil
+}
+
+// directoryList extracts the directories from mounted sources.
+func directoryList(sources []domain.LibrarySource) []domain.LibraryDirectory {
+	directories := make([]domain.LibraryDirectory, 0, len(sources))
+	for _, source := range sources {
+		directories = append(directories, source.Directory)
+	}
+	return directories
 }
 
 func (d *Drive) acceptLogin(ctx context.Context, session *loginSession, tokens pan.Tokens) error {
@@ -175,7 +182,7 @@ func (d *Drive) acceptLogin(ctx context.Context, session *loginSession, tokens p
 	if _, err := d.credentials(state); err != nil {
 		return err
 	}
-	return d.discardOtherAccountDirectory(ctx, account.ID)
+	return d.discardOtherAccountRoots(ctx, account.ID)
 }
 
 func (d *Drive) Disconnect(ctx context.Context) (AccountStatus, error) {

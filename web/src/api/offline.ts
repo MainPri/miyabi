@@ -5,7 +5,7 @@ import { movieStateKeys } from '@/api/movie-states'
 import { refreshQueries } from '@/api/query-refresh'
 import { panKeys, type PanAccountStatus } from '@/api/pan'
 import type { LibrarySource } from '@/api/tasks'
-import { sameSource } from '@/lib/source'
+import { inDirectories } from '@/lib/source'
 
 export function isOfflineTaskActive(task: OfflineSubmission) {
   return task.phase === 'downloading' || task.processing
@@ -40,7 +40,11 @@ export type OfflineSubmission = {
   retry_at?: string
 }
 
-export type OfflineActivity = { source?: LibrarySource; tasks: OfflineSubmission[] }
+export type OfflineActivity = {
+  source?: LibrarySource
+  directories?: Array<{ id: string }>
+  tasks: OfflineSubmission[]
+}
 
 export const offlineKeys = {
   all: ['offline'] as const,
@@ -66,7 +70,7 @@ export function useOfflineTasks(movieID: string, accountID: string, directoryID:
     ...activityOptions,
     enabled: accountID !== '' && directoryID !== '',
     select: activity =>
-      activity.source?.account_id === accountID && activity.source.directory.id === directoryID
+      inDirectories({ account_id: accountID, directory_id: directoryID }, activity.directories)
         ? activity.tasks.filter(task => task.javdb_id === movieID)
         : []
   })
@@ -86,7 +90,7 @@ export function useAddOffline(movieID: string) {
         account &&
         (!account.connected ||
           account.account?.id !== submission.account_id ||
-          account.directory?.id !== submission.directory_id)
+          !inDirectories(submission, account.directories))
       ) {
         void refreshQueries(queryClient, offlineKeys.all)
         return
@@ -95,7 +99,7 @@ export function useAddOffline(movieID: string) {
       // A read or SSE-triggered refresh may already contain a newer task state.
       if ((state?.fetchStatus ?? 'idle') === 'idle' && state?.data === previous) {
         queryClient.setQueryData<OfflineActivity>(offlineKeys.activity, activity =>
-          activity && sameSource(activity.source, submission)
+          activity && inDirectories(submission, activity.directories)
             ? {
                 ...activity,
                 tasks: [
@@ -123,7 +127,7 @@ export function useOfflineControl(action: 'cancel' | 'next') {
       const state = queryClient.getQueryState(offlineKeys.activity)
       if ((state?.fetchStatus ?? 'idle') === 'idle' && state?.data === previous) {
         queryClient.setQueryData<OfflineActivity>(offlineKeys.activity, activity =>
-          activity && sameSource(activity.source, submission)
+          activity && inDirectories(submission, activity.directories)
             ? {
                 ...activity,
                 tasks: activity.tasks.map(task =>

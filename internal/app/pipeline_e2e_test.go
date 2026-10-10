@@ -44,7 +44,7 @@ func TestRepeatedScanReusesActiveWorkAndPreservesCompleteExports(t *testing.T) {
 	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
 	f.addCatalogueMovie(fixtureDetail())
 	for range 2 {
-		if _, err := f.library.StartScan(ctx); err != nil {
+		if _, err := f.library.StartScan(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
 		job, err := f.tasks.Queue().Claim(ctx, []tasks.Kind{tasks.KindScan})
@@ -80,7 +80,7 @@ func TestRepeatedScanReusesActiveWorkAndPreservesCompleteExports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := f.library.StartScan(ctx); err != nil {
+	if _, err := f.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if executed := f.runQueue(t); len(executed) != 1 || executed[0].Type != tasks.KindScan {
@@ -425,7 +425,7 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 	video := fixture.drive.addFile("101", "11", "ABP-123.mp4", 2<<30, []byte("video"))
 	fixture.addCatalogueMovie(fixtureDetail())
 
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	executed := fixture.runQueue(t)
@@ -533,7 +533,7 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 	}
 	// A rescan must reuse the movie snapshot even after all task history is removed.
 	fixture.store.Client.Task.Delete().ExecX(ctx)
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	executed = fixture.runQueue(t)
@@ -569,7 +569,7 @@ func TestPipelineUsesNFOCodeButScrapesCatalogueMetadata(t *testing.T) {
 	}
 	fixture.drive.addFile("104", "11", "ABP-123.nfo", int64(len(body)), body)
 
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	fixture.runQueue(t)
@@ -602,7 +602,7 @@ func TestPipelineUsesNFOCodeButScrapesCatalogueMetadata(t *testing.T) {
 	}
 	fixture.drive.addFile("104", "11", "ABP-123.nfo", int64(len(body)), body)
 	fixture.drive.addFile("102", "11", "poster.jpg", 6, []byte("broken"))
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	fixture.runQueue(t)
@@ -617,7 +617,7 @@ func TestPipelineMarksMovieFailedWhenCatalogueLacksIt(t *testing.T) {
 	fixture.drive.addDirectory("11", "10", "ZZZ-999")
 	fixture.drive.addFile("101", "11", "ZZZ-999.mp4", 2<<30, []byte("video"))
 
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	executed := fixture.runQueue(t)
@@ -661,7 +661,7 @@ func TestPipelineRemovesMovieWhenDeletedFrom115(t *testing.T) {
 	fixture.drive.addFile("101", "11", "ABP-123.mp4", 2<<30, []byte("video"))
 
 	// 1. Initial scan: movie gets indexed and scraped
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	fixture.runQueue(t)
@@ -683,7 +683,7 @@ func TestPipelineRemovesMovieWhenDeletedFrom115(t *testing.T) {
 	fixture.drive.mu.Unlock()
 
 	// 3. User clicks "Scan Media Library"
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	fixture.runQueue(t)

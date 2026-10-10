@@ -1,6 +1,6 @@
 import type { OfflineActivity, OfflineSubmission } from '../../api/offline'
 import type { BatchTask, ScanTask, Task } from '../../api/tasks'
-import { sameSource } from '../../lib/source'
+import { inDirectories } from '../../lib/source'
 
 function isScanTask(task: Task): task is ScanTask {
   return task.type === 'scan'
@@ -70,7 +70,6 @@ export function diffTaskNotifications(ctx: DiffContext): DiffResult {
   const dismissIDs: string[] = []
   const nextEntries = new Map<string, NotificationEntry>()
 
-  const source = ctx.activity.source
   const waitingForScan = ctx.waiting || ctx.isTasksError
   const waitingForOffline = ctx.waiting || ctx.isActivityError
 
@@ -78,7 +77,7 @@ export function diffTaskNotifications(ctx: DiffContext): DiffResult {
   const batches = ctx.tasks.filter(isBatchTask)
 
   for (const task of scans) {
-    if (task.offline_task_id || !sameSource(task.source, source)) {
+    if (task.offline_task_id || !inDirectories(task.source, ctx.activity.directories)) {
       continue
     }
     const id = scanToastID(task.id)

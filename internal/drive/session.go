@@ -2,19 +2,22 @@ package drive
 
 import (
 	"context"
-	"slices"
 
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/pan"
 )
 
-// Session represents controlled access to 115 during an operation.
-// It captures account, mounted directory, and authorization version at issue;
-// checks source-bound reads before and after each request; and serializes
-// database commits under the drive commit lock.
+// Session represents controlled access to 115 during an operation. It is
+// pinned to one mounted root (the primary root for unpinned opens), carries
+// that root's epoch and the credential version at issue, checks source-bound
+// reads before and after each request, and serializes database commits under
+// the drive commit lock. Containment checks accept any mounted root so files
+// of sibling roots stay reachable.
 type Session interface {
 	Source() domain.LibrarySource
+	// Roots returns the currently mounted directories of the account.
+	Roots() []domain.LibraryDirectory
 	// AuthorizationVersion changes on login, disconnect, and mount changes.
 	// It scopes derived data without exposing credentials or expiring on token refresh.
 	AuthorizationVersion() uint64
@@ -24,6 +27,8 @@ type Session interface {
 	WithSource(ctx context.Context, fn func() error) error
 	Commit(ctx context.Context, fn func(tx *ent.Tx) error) error
 	CommitAccount(ctx context.Context, fn func(tx *ent.Tx) error) error
+	// Contains reports whether a file info record belongs inside any mounted root.
+	Contains(info pan.FileInfo) bool
 
 	PlayURL(ctx context.Context, pickCode, userAgent string) ([]pan.PlaySource, error)
 	DownloadURL(ctx context.Context, pickCode, userAgent string) (string, error)
@@ -32,35 +37,44 @@ type Session interface {
 	OfflineTasks(ctx context.Context, page int) (pan.OfflinePage, error)
 }
 
-// Open verifies the current mount and authenticated account, returning a Session.
+// Open verifies the current mount and authenticated account, returning a
+// Session pinned to the account's primary root.
 func (d *Drive) Open(ctx context.Context) (Session, error) {
-	state, err := d.verifiedSource(ctx)
+	state, record, err := d.verifiedSource(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &sourceSession{
-		drive:             d,
-		source:            state.source(),
-		version:           state.authorizationVersion,
-		credentialVersion: state.credentialVersion,
-	}, nil
+	return newSession(d, state, record.source()), nil
 }
 
-// OpenSource opens a Session ensuring the current mount matches the expected source.
+// OpenSource opens a Session ensuring the expected root is still mounted.
 func (d *Drive) OpenSource(ctx context.Context, expected domain.LibrarySource) (Session, error) {
-	sess, err := d.Open(ctx)
+	state := d.snapshot()
+	account, err := d.verifyAccount(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	if sess.Source().AccountID != expected.AccountID || sess.Source().Directory.ID != expected.Directory.ID {
+	record, mounted := state.root(expected.Directory.ID)
+	if !mounted || record.AccountID != account.ID || record.AccountID != expected.AccountID {
 		return nil, ErrSourceChanged
 	}
-	return sess, nil
+	return newSession(d, state, expected), nil
+}
+
+func newSession(d *Drive, state snapshot, source domain.LibrarySource) Session {
+	return &sourceSession{
+		drive:             d,
+		source:            source,
+		epoch:             state.epochs[source.Directory.ID],
+		version:           state.authorizationVersion,
+		credentialVersion: state.credentialVersion,
+	}
 }
 
 type sourceSession struct {
 	drive             *Drive
 	source            domain.LibrarySource
+	epoch             uint64
 	version           uint64
 	credentialVersion uint64
 }
@@ -69,24 +83,45 @@ func (s *sourceSession) Source() domain.LibrarySource {
 	return s.source
 }
 
+func (s *sourceSession) Roots() []domain.LibraryDirectory {
+	state, err := s.drive.sourceState(s.source, s.epoch, s.credentialVersion)
+	if err != nil {
+		return nil
+	}
+	directories := make([]domain.LibraryDirectory, 0, len(state.roots))
+	for _, record := range state.sources(s.source.AccountID) {
+		directories = append(directories, record.Directory)
+	}
+	return directories
+}
+
 func (s *sourceSession) AuthorizationVersion() uint64 {
 	return s.version
 }
 
 func (s *sourceSession) checkSource() error {
-	_, err := s.drive.sourceState(s.source, s.version)
+	_, err := s.drive.sourceState(s.source, s.epoch, s.credentialVersion)
 	return err
+}
+
+// Contains validates against the live root set so sibling roots count too.
+func (s *sourceSession) Contains(info pan.FileInfo) bool {
+	roots := s.Roots()
+	if roots == nil {
+		return false
+	}
+	return WithinRoots(info, roots)
 }
 
 // readSource discards read results from a replaced source. Remote mutations
 // keep their own completion semantics and must not use this helper.
 func readSource[T any](ctx context.Context, s *sourceSession, request func(string) (T, error)) (T, error) {
 	var zero T
-	state, err := s.drive.sourceState(s.source, s.version)
+	state, err := s.drive.sourceState(s.source, s.epoch, s.credentialVersion)
 	if err != nil {
 		return zero, err
 	}
-	value, err := withPanSourceToken(ctx, s.drive, state, request)
+	value, err := withPanSourceToken(ctx, s.drive, state, s, request)
 	if err != nil {
 		return zero, err
 	}
@@ -127,21 +162,21 @@ func (s *sourceSession) DownloadURL(ctx context.Context, pickCode, userAgent str
 }
 
 func (s *sourceSession) AddOffline(ctx context.Context, magnet string) (string, error) {
-	state, err := s.drive.sourceState(s.source, s.version)
+	state, err := s.drive.sourceState(s.source, s.epoch, s.credentialVersion)
 	if err != nil {
 		return "", err
 	}
-	return withPanSourceToken(ctx, s.drive, state, func(token string) (string, error) {
+	return withPanSourceToken(ctx, s.drive, state, s, func(token string) (string, error) {
 		return s.drive.client.AddOffline(ctx, token, magnet, s.source.Directory.ID)
 	})
 }
 
 func (s *sourceSession) RemoveOffline(ctx context.Context, hash string) error {
-	state, err := s.drive.sourceState(s.source, s.version)
+	state, err := s.drive.sourceState(s.source, s.epoch, s.credentialVersion)
 	if err != nil {
 		return err
 	}
-	_, err = withPanSourceToken(ctx, s.drive, state, func(token string) (struct{}, error) {
+	_, err = withPanSourceToken(ctx, s.drive, state, s, func(token string) (struct{}, error) {
 		return struct{}{}, s.drive.client.RemoveOffline(ctx, token, hash)
 	})
 	if err != nil {
@@ -168,7 +203,7 @@ func (s *sourceSession) WithSource(ctx context.Context, fn func() error) error {
 		return err
 	}
 	defer s.drive.commit.Unlock()
-	if _, err := s.drive.sourceState(s.source, s.version); err != nil {
+	if _, err := s.drive.sourceState(s.source, s.epoch, s.credentialVersion); err != nil {
 		return err
 	}
 	return fn()
@@ -189,19 +224,19 @@ func (s *sourceSession) CommitAccount(ctx context.Context, fn func(tx *ent.Tx) e
 	return ent.WithTx(ctx, s.drive.database, fn)
 }
 
-// SourceInfo fetches file info and validates that it resides within the session's library source.
+// SourceInfo fetches file info and validates that it resides within the session's mounted roots.
 func SourceInfo(ctx context.Context, sess Session, id string) (pan.FileInfo, error) {
 	info, err := sess.Info(ctx, id)
 	if err != nil {
 		return pan.FileInfo{}, err
 	}
-	if !WithinSource(info, sess.Source()) {
+	if !sess.Contains(info) {
 		return pan.FileInfo{}, domain.E(domain.KindNotFound, "下载资源已移出媒体目录", nil)
 	}
 	return info, nil
 }
 
-// DirectoryEntries lists all file entries across pages in a directory, validating that the directory is within the library source.
+// DirectoryEntries lists all file entries across pages in a directory, validating that the directory is within the mounted roots.
 func DirectoryEntries(ctx context.Context, sess Session, id string) ([]pan.File, error) {
 	var files []pan.File
 	err := WalkFilePages(ctx, func(offset int) (pan.FilePage, error) {
@@ -209,7 +244,7 @@ func DirectoryEntries(ctx context.Context, sess Session, id string) ([]pan.File,
 		if err != nil {
 			return pan.FilePage{}, err
 		}
-		if !slices.ContainsFunc(page.Path, func(directory pan.Directory) bool { return directory.ID == sess.Source().Directory.ID }) {
+		if !sess.Contains(pan.FileInfo{File: pan.File{ID: id}, Path: page.Path}) {
 			return pan.FilePage{}, domain.E(domain.KindConflict, "该文件夹已移出媒体目录，请重新扫描", nil)
 		}
 		return page, nil

@@ -10,6 +10,7 @@ import (
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
+	"github.com/ppxb/miyabi/internal/ent/file"
 	"github.com/ppxb/miyabi/internal/ent/movie"
 	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/library/scrape"
@@ -28,6 +29,13 @@ func (s *Scanner) RescrapeMovie(ctx context.Context, id int, code string) (*ent.
 	if err != nil {
 		return nil, err
 	}
+	source := sess.Source()
+	// A movie may keep files in any mounted root of the account.
+	roots := make([]string, 0, len(sess.Roots()))
+	for _, directory := range sess.Roots() {
+		roots = append(roots, directory.ID)
+	}
+	scope := database.AccountFiles(source.AccountID, roots)
 	var parent *ent.Task
 	// Mount callbacks enqueue with the source lock held. Keep the same order,
 	// and acquire the queue before opening a database write transaction.
@@ -37,7 +45,7 @@ func (s *Scanner) RescrapeMovie(ctx context.Context, id int, code string) (*ent.
 		}
 		defer s.tasksSvc.Queue().Unlock()
 		return ent.WithTx(ctx, s.db, func(tx *ent.Tx) error {
-			record, err := tx.Movie.Query().Where(movie.IDEQ(id), movie.HasFilesWith(database.LibraryFiles(sess.Source()))).Only(ctx)
+			record, err := tx.Movie.Query().Where(movie.IDEQ(id), movie.HasFilesWith(scope)).Only(ctx)
 			if ent.IsNotFound(err) {
 				return domain.E(domain.KindNotFound, "当前挂载目录中未找到该影片的媒体文件", nil)
 			}
@@ -55,19 +63,33 @@ func (s *Scanner) RescrapeMovie(ctx context.Context, id int, code string) (*ent.
 				if err != nil {
 					return err
 				}
-				if !correcting && input.Rebuild && input.Source == sess.Source() {
+				if !correcting && input.Rebuild && input.Source.AccountID == source.AccountID {
 					parent, err = tx.Task.Get(ctx, input.ScanTaskID)
 					return err
 				}
 				return domain.E(domain.KindConflict, "该影片正在处理中，请完成后再操作", nil)
 			}
-			busy, err := tx.Task.Query().Where(task.TypeEQ(tasks.KindScan.String()),
-				task.StatusIn(task.StatusQueued, task.StatusRunning), func(q *sql.Selector) {
-					q.Where(sqljson.ValueEQ(task.FieldPayload, sess.Source().AccountID, sqljson.Path("source", "account_id")))
-					q.Where(sqljson.ValueEQ(task.FieldPayload, sess.Source().Directory.ID, sqljson.Path("source", "directory", "id")))
-				}).Exist(ctx)
+			// Only scans whose payload covers one of the movie's own file roots
+			// conflict with this rescrape; sibling roots scan independently.
+			fileRoots, err := tx.File.Query().Where(file.MovieIDEQ(id), file.AccountIDEQ(source.AccountID)).
+				Select(file.FieldRootID).Strings(ctx)
 			if err != nil {
 				return err
+			}
+			busy := false
+			if len(fileRoots) > 0 {
+				rootIDs := make([]any, len(fileRoots))
+				for i, rootID := range fileRoots {
+					rootIDs[i] = rootID
+				}
+				busy, err = tx.Task.Query().Where(task.TypeEQ(tasks.KindScan.String()),
+					task.StatusIn(task.StatusQueued, task.StatusRunning), func(q *sql.Selector) {
+						q.Where(sqljson.ValueEQ(task.FieldPayload, source.AccountID, sqljson.Path("source", "account_id")))
+						q.Where(sqljson.ValueIn(task.FieldPayload, rootIDs, sqljson.Path("source", "directory", "id")))
+					}).Exist(ctx)
+				if err != nil {
+					return err
+				}
 			}
 			if busy {
 				return domain.E(domain.KindConflict, "媒体库正在扫描，请完成后再操作", nil)
@@ -99,8 +121,8 @@ func (s *Scanner) RescrapeMovie(ctx context.Context, id int, code string) (*ent.
 				return err
 			}
 			body, err := tasks.EncodePayload(domain.ScanPayload{
-				MovieID: id, Code: record.Code, Rebuild: true, Source: sess.Source(),
-				Scan: domain.ScanProgress{Stage: "done", Movies: 1, CurrentPath: sess.Source().Directory.Path},
+				MovieID: id, Code: record.Code, Rebuild: true, Source: source,
+				Scan: domain.ScanProgress{Stage: "done", Movies: 1, CurrentPath: source.Directory.Path},
 			})
 			if err != nil {
 				return err
@@ -110,7 +132,7 @@ func (s *Scanner) RescrapeMovie(ctx context.Context, id int, code string) (*ent.
 				return err
 			}
 			body, err = tasks.EncodePayload(scrape.MetadataPayload{
-				Rebuild: true, Source: sess.Source(), ScanTaskID: parent.ID, MovieID: id,
+				Rebuild: true, Source: source, ScanTaskID: parent.ID, MovieID: id,
 				Code: record.Code, JavDBID: domain.ValueOrZero(record.JavdbID), ManualCode: record.ManualCode,
 			})
 			if err != nil {

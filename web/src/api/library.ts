@@ -5,7 +5,8 @@ import type { DiscoverMovieDetail } from '@/api/discover'
 import { movieStateKeys } from '@/api/movie-states'
 import { refreshQueries } from '@/api/query-refresh'
 import { panKeys, type PanAccountStatus } from '@/api/pan'
-import { taskKeys, type LibrarySource, type ScanTask, type Task } from '@/api/tasks'
+import { taskKeys, type ScanTask, type Task } from '@/api/tasks'
+import { inDirectories } from '@/lib/source'
 
 export const LIBRARY_PAGE_SIZE = 20
 
@@ -31,7 +32,7 @@ export type LibraryMovie = {
 }
 
 type LibraryPage = {
-  source?: LibrarySource
+  directories?: Array<{ id: string; name: string; path: string }>
   movies: LibraryMovie[]
   total: number
   page: number
@@ -68,11 +69,12 @@ export function useLibraryMovies(page: number) {
 export function useStartLibraryScan() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (rebuild: boolean) =>
-      apiPost<ScanTask>(rebuild ? '/api/library/rebuild' : '/api/library/scan'),
+    mutationFn: ({ rebuild, directoryID }: { rebuild: boolean; directoryID?: string }) =>
+      apiPost<ScanTask[]>(rebuild ? '/api/library/rebuild' : '/api/library/scan',
+        directoryID ? { directory_id: directoryID } : {}),
     onMutate: () => queryClient.getQueryData<Task[]>(taskKeys.all),
-    onSuccess: (task, _rebuild, previous) => {
-      cacheScanTask(queryClient, task, previous)
+    onSuccess: (tasks, _input, previous) => {
+      for (const task of tasks) cacheScanTask(queryClient, task, previous)
       return refreshQueries(queryClient, taskKeys.all)
     }
   })
@@ -96,7 +98,7 @@ function cacheScanTask(queryClient: QueryClient, task: ScanTask, previous: Task[
     account &&
     (!account.connected ||
       account.account?.id !== task.source.account_id ||
-      account.directory?.id !== task.source.directory.id)
+      !inDirectories(task.source, account.directories))
   )
     return
   const state = queryClient.getQueryState(taskKeys.all)

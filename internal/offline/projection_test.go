@@ -39,7 +39,7 @@ func TestOfflineProjectionUsesMovieIdentityAndExposesLibraryID(t *testing.T) {
 				SetAccountID(source.AccountID).SetRootID(source.Directory.ID).SetMovie(local).SaveX(ctx)
 			input.FileIds = []string{"video"}
 			record = service.database.OfflineDownload.UpdateOneID(record.ID).SetFileIds(input.FileIds).SetStatus(offlinedownload.StatusDone).SaveX(ctx)
-			result, err := service.submission(ctx, record, &source)
+			result, err := service.submission(ctx, record)
 			if err != nil || result.Phase != test.phase {
 				t.Fatalf("wrong offline identity: %#v, %v", result, err)
 			}
@@ -132,7 +132,7 @@ func TestOfflineActionDependsOnCurrentFilesRatherThanDownloadHistory(t *testing.
 	}
 	input := *record
 
-	state, err := service.submission(ctx, record, &source)
+	state, err := service.submission(ctx, record)
 	if err != nil || state.Phase != "processing" {
 		t.Fatalf("processing: %#v %v", state, err)
 	}
@@ -140,7 +140,7 @@ func TestOfflineActionDependsOnCurrentFilesRatherThanDownloadHistory(t *testing.
 		t.Fatal(err)
 	}
 	record.FileIds = []string{"video-1"}
-	state, err = service.submission(ctx, record, &source)
+	state, err = service.submission(ctx, record)
 	if err != nil || state.Phase != "available" {
 		t.Fatalf("history without file: %#v %v", state, err)
 	}
@@ -152,34 +152,36 @@ func TestOfflineActionDependsOnCurrentFilesRatherThanDownloadHistory(t *testing.
 		SetAccountID(source.AccountID).SetRootID(source.Directory.ID).SetMovieID(movieRecord.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	state, err = service.submission(ctx, record, &source)
+	state, err = service.submission(ctx, record)
 	if err != nil || state.Phase != "in_library" {
 		t.Fatalf("indexed file: %#v %v", state, err)
 	}
-	other := source
-	other.Directory.ID = "another-root"
-	state, err = service.submission(ctx, record, &other)
-	if err != nil || state.Phase != "available" {
-		t.Fatalf("other root: %#v %v", state, err)
+	// A record pinned to an unmounted root loses its actions.
+	if err := service.drive.RemoveDirectory(ctx, source.Directory.ID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = service.submission(ctx, record)
+	if err != nil || state.Phase != "available" || state.CanCancel {
+		t.Fatalf("unmounted root: %#v %v", state, err)
 	}
 	if _, err := service.database.File.Delete().Where(file.FileIDEQ("video-1")).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	state, err = service.submission(ctx, record, &source)
+	state, err = service.submission(ctx, record)
 	if err != nil || state.Phase != "available" {
 		t.Fatalf("deleted file: %#v %v", state, err)
 	}
 }
 
-func TestCompletedOfflineTaskDefersScanForAnotherMount(t *testing.T) {
+func TestCompletedOfflineTaskDefersScanForUnmountedRoot(t *testing.T) {
 	service, record, input, source := offlineFixture(t)
 	sess, err := service.drive.OpenSource(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mountSource(t, service.drive, stubOf(t, service.drive), domain.LibrarySource{
-		AccountID: source.AccountID, Directory: domain.LibraryDirectory{ID: "another-root", Name: "Another", Path: "/Another"},
-	})
+	if err := service.drive.RemoveDirectory(t.Context(), source.Directory.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.UpdateTask(t.Context(), sess, record, pan.OfflineTask{Status: 2, FileID: "download-folder"}); err != nil {
 		t.Fatal(err)
 	}
@@ -227,11 +229,11 @@ func TestOfflineActivityKeepsLatestTasksInCurrentSource(t *testing.T) {
 		current.DirectoryID != source.Directory.ID || current.Phase != "downloading" {
 		t.Fatalf("latest task: %+v", current)
 	}
-	mountSource(t, service.drive, stubOf(t, service.drive), domain.LibrarySource{
-		AccountID: source.AccountID, Directory: domain.LibraryDirectory{ID: "empty-root", Name: "Empty", Path: "/Empty"},
-	})
+	if err := service.drive.RemoveDirectory(ctx, source.Directory.ID); err != nil {
+		t.Fatal(err)
+	}
 	activity, err = service.Activity(ctx)
-	if err != nil || activity.Source == nil || activity.Source.Directory.ID != "empty-root" || len(activity.Tasks) != 0 {
+	if err != nil || activity.Source != nil || activity.Directories != nil || len(activity.Tasks) != 0 {
 		t.Fatalf("changed source: %+v err=%v", activity, err)
 	}
 }

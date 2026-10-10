@@ -56,11 +56,11 @@ type Movie struct {
 }
 
 type Page struct {
-	Source  *domain.LibrarySource `json:"source,omitempty"`
-	Movies  []Movie               `json:"movies"`
-	Total   int                   `json:"total"`
-	Page    int                   `json:"page"`
-	HasMore bool                  `json:"has_more"`
+	Directories []domain.LibraryDirectory `json:"directories,omitempty"`
+	Movies      []Movie                   `json:"movies"`
+	Total       int                       `json:"total"`
+	Page        int                       `json:"page"`
+	HasMore     bool                      `json:"has_more"`
 }
 
 type Service struct {
@@ -71,6 +71,7 @@ type Service struct {
 	localScanner *scan.LocalScanner
 	exportMgr    *export.Manager
 	scanLock     syncx.ContextLock
+	notifier     scan.MediaNotifier
 }
 
 type Options struct {
@@ -90,8 +91,15 @@ func New(database *ent.Client, d *drive.Drive, tasks *tasks.Service, images *med
 	}
 	if d != nil && tasks != nil {
 		d.SetMountListener(func(ctx context.Context, event drive.MountEvent) error {
-			if event.Source.Directory.ID != "" {
+			switch event.Change {
+			case drive.MountAdded:
 				if _, err := svc.EnqueueFreshScan(ctx, event.Source); err != nil {
+					return err
+				}
+			case drive.MountRemoved:
+				if err := svc.exportMgr.WithConfig(func(cfg export.Config) error {
+					return scan.PruneSource(ctx, svc.database, event.Source, cfg, svc.notifier)
+				}); err != nil {
 					return err
 				}
 			}
@@ -102,40 +110,75 @@ func New(database *ent.Client, d *drive.Drive, tasks *tasks.Service, images *med
 	return svc
 }
 
-func (s *Service) StartScan(ctx context.Context) (domain.TaskInfo, error) {
-	sess, err := s.drive.Open(ctx)
+// StartScan queues a full scan of one mounted directory, or of every mounted
+// directory when no ID is given.
+func (s *Service) StartScan(ctx context.Context, directoryID string) ([]domain.TaskInfo, error) {
+	sources, err := s.selectedSources(directoryID)
 	if err != nil {
-		return domain.TaskInfo{}, err
+		return nil, err
 	}
-	return s.EnqueueScan(ctx, sess.Source())
+	result := make([]domain.TaskInfo, 0, len(sources))
+	for _, source := range sources {
+		info, err := s.EnqueueScan(ctx, source)
+		if err != nil {
+			return result, err
+		}
+		result = append(result, info)
+	}
+	return result, nil
 }
 
-// StartRebuild scans the current source and refreshes every matched movie.
-func (s *Service) StartRebuild(ctx context.Context) (domain.TaskInfo, error) {
-	sess, err := s.drive.Open(ctx)
+// StartRebuild scans the selected sources and refreshes every matched movie.
+func (s *Service) StartRebuild(ctx context.Context, directoryID string) ([]domain.TaskInfo, error) {
+	sources, err := s.selectedSources(directoryID)
 	if err != nil {
-		return domain.TaskInfo{}, err
+		return nil, err
 	}
-	return s.enqueueScan(ctx, sess.Source(), true, task.StatusQueued, task.StatusRunning)
+	result := make([]domain.TaskInfo, 0, len(sources))
+	for _, source := range sources {
+		info, err := s.enqueueScan(ctx, source, true, task.StatusQueued, task.StatusRunning)
+		if err != nil {
+			return result, err
+		}
+		result = append(result, info)
+	}
+	return result, nil
 }
 
-// Source returns the currently mounted library source, or nil if unmounted.
-func (s *Service) Source() *domain.LibrarySource {
+// selectedSources validates an optional directory ID against the mount set.
+func (s *Service) selectedSources(directoryID string) ([]domain.LibrarySource, error) {
+	sources := s.Sources()
+	if len(sources) == 0 {
+		return nil, drive.ErrMediaDirectoryRequired
+	}
+	if directoryID == "" {
+		return sources, nil
+	}
+	for _, source := range sources {
+		if source.Directory.ID == directoryID {
+			return []domain.LibrarySource{source}, nil
+		}
+	}
+	return nil, domain.E(domain.KindNotFound, "该目录未挂载", nil)
+}
+
+// Sources returns every mounted library source.
+func (s *Service) Sources() []domain.LibrarySource {
 	if s.drive == nil {
 		return nil
 	}
-	return s.drive.Source()
+	return s.drive.Sources()
 }
 
 // MatchingMovies queries local movies matching any of the given JavDB IDs or normalized codes
-// that possess indexed files in the currently mounted library source or local library.
+// that possess indexed files in a mounted library source or the local library.
 func (s *Service) MatchingMovies(ctx context.Context, javdbIDs []string, codes []string) ([]domain.LocalMovie, error) {
 	if len(javdbIDs) == 0 && len(codes) == 0 {
 		return nil, nil
 	}
 	records, err := s.database.Movie.Query().Where(
 		movie.Or(movie.JavdbIDIn(javdbIDs...), movie.And(movie.JavdbIDIsNil(), movie.CodeIn(codes...))),
-		movie.HasFilesWith(libraryScope(s.Source())),
+		movie.HasFilesWith(libraryScope(s.Sources())),
 	).Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query matching movies: %w", err)
@@ -153,6 +196,7 @@ func (s *Service) MatchingMovies(ctx context.Context, javdbIDs []string, codes [
 
 // SetMediaNotifier binds the library/Emby cycle before task workers start.
 func (s *Service) SetMediaNotifier(notifier scan.MediaNotifier) {
+	s.notifier = notifier
 	s.scanner.SetMediaNotifier(notifier)
 	s.localScanner.SetMediaNotifier(notifier)
 }
@@ -215,17 +259,26 @@ func (s *Service) EnqueueTargetedScan(ctx context.Context, tx *ent.Tx, source do
 	return taskRecord.ID, nil
 }
 
-func libraryScope(source *domain.LibrarySource) predicate.File {
-	local := file.AccountIDEQ(domain.LocalAccountID)
-	if source != nil {
-		return file.Or(database.LibraryFiles(*source), local)
+func libraryScope(sources []domain.LibrarySource) predicate.File {
+	scopes := make([]predicate.File, 0, len(sources)+1)
+	for _, source := range sources {
+		scopes = append(scopes, database.LibraryFiles(source))
 	}
-	return local
+	scopes = append(scopes, file.AccountIDEQ(domain.LocalAccountID))
+	return file.Or(scopes...)
 }
 
 func (s *Service) Movies(ctx context.Context, page, limit int) (Page, error) {
-	result := Page{Movies: []Movie{}, Page: page, Source: s.Source()}
-	scope := libraryScope(result.Source)
+	var directories []domain.LibraryDirectory
+	sources := s.Sources()
+	if len(sources) > 0 {
+		directories = make([]domain.LibraryDirectory, 0, len(sources))
+		for _, source := range sources {
+			directories = append(directories, source.Directory)
+		}
+	}
+	result := Page{Movies: []Movie{}, Page: page, Directories: directories}
+	scope := libraryScope(sources)
 	var err error
 	result.Total, err = s.database.File.Query().Where(scope).Aggregate(func(selector *sql.Selector) string {
 		return sql.As("COUNT(DISTINCT "+selector.C(file.FieldMovieID)+")", "total")

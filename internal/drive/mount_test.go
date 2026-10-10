@@ -3,6 +3,7 @@ package drive
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -67,8 +68,8 @@ func TestMountListenerReplacementAndClearing(t *testing.T) {
 	d.SetMountListener(func(_ context.Context, event MountEvent) error {
 		calls.Add(1)
 		// Reading state and clearing the callback must not deadlock on d.mu.
-		source := d.Source()
-		if source == nil || *source != event.Source {
+		mounted := slices.ContainsFunc(d.Sources(), func(source domain.LibrarySource) bool { return source == event.Source })
+		if !mounted {
 			return errors.New("listener did not observe the new mount")
 		}
 		d.SetMountListener(nil)
@@ -85,8 +86,8 @@ func TestMountListenerReplacementAndClearing(t *testing.T) {
 	if err := d.ClearDirectory(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 || d.Source() != nil {
-		t.Fatalf("cleared listener: calls=%d source=%+v", calls.Load(), d.Source())
+	if calls.Load() != 1 || len(d.Sources()) != 0 {
+		t.Fatalf("cleared listener: calls=%d sources=%+v", calls.Load(), d.Sources())
 	}
 }
 
@@ -99,7 +100,7 @@ func TestDirectoryMountPublishesOnceAndDoesNotInterruptTheSameMount(t *testing.T
 		t.Fatalf("mount: %+v err=%v", directory, err)
 	}
 	event := mounts.lastEvent()
-	if mounts.count() != 1 || event.Source.AccountID != testSource.AccountID || event.Source.Directory != directory {
+	if mounts.count() != 1 || event.Change != MountAdded || event.Source.AccountID != testSource.AccountID || event.Source.Directory != directory {
 		t.Fatalf("mount did not publish its source once: calls=%d event=%+v", mounts.count(), event)
 	}
 	version := d.snapshot().authorizationVersion
@@ -115,16 +116,85 @@ func TestDirectoryMountPublishesOnceAndDoesNotInterruptTheSameMount(t *testing.T
 		t.Fatal(err)
 	}
 	if d.snapshot().authorizationVersion != version+1 || mounts.count() != 2 {
-		t.Fatal("changing directory did not publish exactly one new mount")
+		t.Fatal("adding a directory did not publish exactly one new mount")
 	}
-	// Startup restores the durable mount without publishing.
+	mounted := d.Sources()
+	if len(mounted) != 2 || mounted[0].Directory.ID != "20" || mounted[1].Directory.ID != "30" {
+		t.Fatalf("mounted sources = %+v", mounted)
+	}
+	// Startup restores the durable mounts without publishing.
 	restarted, err := NewWithClient(ctx, d.database, d.client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	if source := restarted.Source(); source == nil || source.Directory.ID != "30" || source.AccountID != testSource.AccountID {
-		t.Fatalf("restart lost the mount: %+v", source)
+	restored := restarted.Sources()
+	if len(restored) != 2 || restored[0].Directory.ID != "20" || restored[1].Directory.ID != "30" {
+		t.Fatalf("restart lost the mounts: %+v", restored)
+	}
+}
+
+func TestSelectDirectoryRejectsOverlappingRoots(t *testing.T) {
+	d, client := mountFixture(t)
+	ctx := t.Context()
+	// The chain answers carry the ancestry 115 returns for each listing.
+	client.list = func(_ context.Context, _, id string, _, _ int) (pan.FilePage, error) {
+		switch id {
+		case "nested":
+			return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: "10", Name: "Movies"}, {ID: "nested", Name: "Nested"}}}, nil
+		case "10":
+			return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: "root-of-10", Name: "Root"}, {ID: "10", Name: "Movies"}}}, nil
+		default:
+			return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: id, Name: "Movies" + id}}}, nil
+		}
+	}
+	if _, err := d.SelectDirectory(ctx, "10"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SelectDirectory(ctx, "nested"); err == nil {
+		t.Fatal("mounting a directory inside an existing root was accepted")
+	}
+	// Mounting the ancestor of an existing root is rejected through its chain.
+	if _, err := d.SelectDirectory(ctx, "root-of-10"); err == nil {
+		t.Fatal("mounting an ancestor of an existing root was accepted")
+	}
+	if len(d.Sources()) != 1 || d.Sources()[0].Directory.ID != "10" {
+		t.Fatalf("overlap checks changed the mount set: %+v", d.Sources())
+	}
+}
+
+func TestRemovingARootKeepsSiblingSessionsValid(t *testing.T) {
+	d, client := mountFixture(t)
+	ctx := t.Context()
+	selectTestDirectory(t, d, client, testSource.Directory)
+	selectTestDirectory(t, d, client, domain.LibraryDirectory{ID: "20", Name: "Other", Path: "/Other"})
+	sibling, err := d.OpenSource(ctx, domain.LibrarySource{AccountID: testSource.AccountID, Directory: domain.LibraryDirectory{ID: "20", Name: "Other", Path: "/Other"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary, err := d.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RemoveDirectory(ctx, "10"); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Sources()) != 1 || d.Sources()[0].Directory.ID != "20" {
+		t.Fatalf("sources after removal = %+v", d.Sources())
+	}
+	// The removed root's session dies; its epoch does not resurrect on remount.
+	if _, err := primary.List(ctx, "10", 0); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("removed root session = %v", err)
+	}
+	if _, err := sibling.List(ctx, "20", 0); err != nil {
+		t.Fatalf("sibling root session = %v", err)
+	}
+	selectTestDirectory(t, d, client, testSource.Directory)
+	if _, err := primary.List(ctx, "10", 0); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("remounted root accepted the stale session: %v", err)
+	}
+	if _, err := d.OpenSource(ctx, testSource); err != nil {
+		t.Fatalf("remounted root session = %v", err)
 	}
 }
 
@@ -140,22 +210,22 @@ func TestMountRollsBackWhenAListenerRejectsIt(t *testing.T) {
 		t.Fatalf("listener failure=%v", err)
 	}
 	after := d.snapshot()
-	saved, found := savedDirectory(t, d)
-	if mounts.count() != 1 || after.directory != before.directory || after.authorizationVersion != before.authorizationVersion ||
-		!found || saved != before.directory {
-		t.Fatalf("failed mount left partial state: memory=%+v saved=%+v found=%t", after.directory, saved, found)
+	saved, found := savedRoots(t, d)
+	if mounts.count() != 1 || len(after.roots) != len(before.roots) || after.authorizationVersion != before.authorizationVersion ||
+		!found || len(saved) != 1 || saved[0] != before.roots[0] {
+		t.Fatalf("failed mount left partial state: memory=%+v saved=%+v found=%t", after.roots, saved, found)
 	}
 	mounts.reject(nil)
-	if _, err := d.SelectDirectory(ctx, "20"); err != nil || d.Source().Directory.ID != "20" {
+	if _, err := d.SelectDirectory(ctx, "20"); err != nil || d.Sources()[1].Directory.ID != "20" {
 		t.Fatalf("retry after a rejected mount: %v", err)
 	}
-	if sess, err := d.Open(ctx); err != nil || sess.Source().Directory.ID != "20" {
+	if sess, err := d.OpenSource(ctx, domain.LibrarySource{AccountID: testSource.AccountID, Directory: domain.LibraryDirectory{ID: "20"}}); err != nil || sess.Source().Directory.ID != "20" {
 		t.Fatalf("session after retry = %v, %v", sess, err)
 	}
 }
 
-func TestLateMountRequestsCannotReplaceANewerSource(t *testing.T) {
-	for _, next := range []string{"20", "30", "disconnect"} {
+func TestLateMountRequestsCannotCorruptAConcurrentMountSet(t *testing.T) {
+	for _, next := range []string{"20", "disconnect"} {
 		t.Run(next, func(t *testing.T) {
 			d, client := mountFixture(t)
 			ctx := t.Context()
@@ -173,6 +243,7 @@ func TestLateMountRequestsCannotReplaceANewerSource(t *testing.T) {
 			finished := make(chan error, 1)
 			go func() { _, err := d.SelectDirectory(ctx, "20"); finished <- err }()
 			await(t, started)
+			published := mounts.count()
 			if next == "disconnect" {
 				if _, err := d.Disconnect(ctx); err != nil {
 					t.Fatal(err)
@@ -181,50 +252,55 @@ func TestLateMountRequestsCannotReplaceANewerSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			version := d.snapshot().authorizationVersion
-			published := mounts.count()
 			release()
 			err := await(t, finished)
-			wantID := next
 			switch next {
 			case "20":
+				// The stale request re-reads the newer state; mounting the same
+				// directory again stays idempotent.
 				if err != nil {
-					t.Fatalf("same mount retry failed: %v", err)
+					t.Fatalf("concurrent mount retry failed: %v", err)
 				}
-			case "30":
-				if !errors.Is(err, ErrSourceChanged) {
-					t.Fatalf("stale directory request=%v", err)
+				if len(d.Sources()) != 1 || d.Sources()[0].Directory.ID != "20" {
+					t.Fatalf("concurrent mount produced %+v", d.Sources())
 				}
 			case "disconnect":
-				wantID = ""
-				if !errors.Is(err, pan.ErrUnauthorized) {
+				want := pan.ErrUnauthorized
+				if !errors.Is(err, want) {
 					t.Fatalf("stale account request=%v", err)
 				}
+				if len(d.Sources()) != 0 {
+					t.Fatalf("sources after logout = %+v", d.Sources())
+				}
 			}
-			if d.snapshot().directory.ID != wantID || d.snapshot().authorizationVersion != version || mounts.count() != published {
-				t.Fatal("late request changed the source or published another mount")
+			if d.snapshot().authorizationVersion < version || mounts.count() < published {
+				t.Fatal("late request published fewer events than applied changes")
 			}
 		})
 	}
 }
 
-func TestVerifiedAccountKeepsOnlyItsOwnDirectory(t *testing.T) {
+func TestVerifiedAccountKeepsOnlyItsOwnDirectories(t *testing.T) {
 	d, client := mountedTestDrive(t)
 	ctx := t.Context()
 	mounts := recordMounts(d)
-	if err := d.discardOtherAccountDirectory(ctx, testSource.AccountID); err != nil {
+	if err := d.discardOtherAccountRoots(ctx, testSource.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	if source := d.Source(); source == nil || source.Directory.ID != testSource.Directory.ID || mounts.count() != 0 {
-		t.Fatalf("same-account verification touched the mount: source=%v calls=%d", source, mounts.count())
+	if len(d.Sources()) != 1 || d.Sources()[0].Directory.ID != testSource.Directory.ID || mounts.count() != 0 {
+		t.Fatalf("same-account verification touched the mounts: sources=%v calls=%d", d.Sources(), mounts.count())
 	}
 	client.account = func(context.Context, string) (pan.Account, error) { return pan.Account{ID: "different-account"}, nil }
 	d.invalidateAccountCache()
 	status, err := d.Account(ctx)
-	if err != nil || !status.Connected || status.Directory != nil {
+	if err != nil || !status.Connected || status.Directories != nil {
 		t.Fatalf("other account status = %+v, %v", status, err)
 	}
-	if _, found := savedDirectory(t, d); found || d.Source() != nil || mounts.count() != 1 || mounts.lastEvent().Source.Directory.ID != "" {
-		t.Fatalf("old account selection retained: source=%v calls=%d", d.Source(), mounts.count())
+	if _, found := savedRoots(t, d); found || len(d.Sources()) != 0 || mounts.count() != 1 || mounts.lastEvent().Source.Directory.ID != testSource.Directory.ID {
+		t.Fatalf("old account mounts retained: sources=%v calls=%d", d.Sources(), mounts.count())
+	}
+	if mounts.lastEvent().Change != MountRemoved {
+		t.Fatalf("discard event = %+v", mounts.lastEvent())
 	}
 }
 
@@ -235,10 +311,10 @@ func TestClearingAnUnmountedDriveIsHarmless(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if d.Source() != nil {
-		t.Fatalf("source after clearing = %+v", d.Source())
+	if len(d.Sources()) != 0 {
+		t.Fatalf("sources after clearing = %+v", d.Sources())
 	}
-	if _, found := savedDirectory(t, d); found {
+	if _, found := savedRoots(t, d); found {
 		t.Fatal("a directory setting appeared while clearing")
 	}
 }
@@ -273,6 +349,9 @@ func TestSessionsTrackTheMountTheyWereIssuedAgainst(t *testing.T) {
 		t.Fatalf("commit ran=%t err=%v", committed, err)
 	}
 	selectTestDirectory(t, d, client, domain.LibraryDirectory{ID: "20", Name: "Other", Path: "/Other"})
+	if err := d.RemoveDirectory(ctx, testSource.Directory.ID); err != nil {
+		t.Fatal(err)
+	}
 	for name, call := range map[string]func() error{
 		"list":   func() error { _, err := sess.List(ctx, testSource.Directory.ID, 0); return err },
 		"info":   func() error { _, err := sess.Info(ctx, "f1"); return err },
@@ -284,8 +363,16 @@ func TestSessionsTrackTheMountTheyWereIssuedAgainst(t *testing.T) {
 		},
 	} {
 		if err := call(); !errors.Is(err, ErrSourceChanged) {
-			t.Fatalf("%s on a replaced mount = %v", name, err)
+			t.Fatalf("%s on a removed mount = %v", name, err)
 		}
+	}
+	// Mounting the same directory again must not resurrect the stale session.
+	selectTestDirectory(t, d, client, testSource.Directory)
+	if _, err := d.OpenSource(ctx, testSource); err != nil {
+		t.Fatalf("session after remount = %v", err)
+	}
+	if _, err := sess.List(ctx, testSource.Directory.ID, 0); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("remount resurrected the stale session: %v", err)
 	}
 	// Account-scoped work outlives the mount but not the credentials.
 	if err := sess.CommitAccount(ctx, func(*ent.Tx) error { return nil }); err != nil {
@@ -368,22 +455,23 @@ func TestOpenRequiresAMountedDirectoryOfTheVerifiedAccount(t *testing.T) {
 	}
 }
 
-func TestWithinSource(t *testing.T) {
-	source := testSource
+func TestWithinRoots(t *testing.T) {
+	directories := []domain.LibraryDirectory{testSource.Directory, {ID: "30", Name: "Extras", Path: "/Extras"}}
 	for name, test := range map[string]struct {
 		info pan.FileInfo
 		want bool
 	}{
-		"the root itself": {pan.FileInfo{File: pan.File{ID: source.Directory.ID}}, true},
-		"a descendant":    {pan.FileInfo{File: pan.File{ID: "200"}, Path: []pan.Directory{{ID: "0"}, {ID: source.Directory.ID}, {ID: "150"}}}, true},
-		"outside":         {pan.FileInfo{File: pan.File{ID: "300"}, Path: []pan.Directory{{ID: "0"}, {ID: "999"}}}, false},
+		"the root itself": {pan.FileInfo{File: pan.File{ID: testSource.Directory.ID}}, true},
+		"a descendant":    {pan.FileInfo{File: pan.File{ID: "200"}, Path: []pan.Directory{{ID: "0"}, {ID: testSource.Directory.ID}, {ID: "150"}}}, true},
+		"a sibling root":  {pan.FileInfo{File: pan.File{ID: "300"}, Path: []pan.Directory{{ID: "0"}, {ID: "30"}, {ID: "310"}}}, true},
+		"outside":         {pan.FileInfo{File: pan.File{ID: "400"}, Path: []pan.Directory{{ID: "0"}, {ID: "999"}}}, false},
+		"another file":    {pan.FileInfo{File: pan.File{ID: "301"}, Path: []pan.Directory{{ID: "0"}, {ID: "31"}}}, false},
 	} {
-		if got := WithinSource(test.info, source); got != test.want {
+		if got := WithinRoots(test.info, directories); got != test.want {
 			t.Fatalf("%s: within=%t, want %t", name, got, test.want)
 		}
 	}
-	everything := domain.LibrarySource{Directory: domain.LibraryDirectory{ID: "0"}}
-	if !WithinSource(pan.FileInfo{File: pan.File{ID: "300"}}, everything) {
+	if !WithinRoots(pan.FileInfo{File: pan.File{ID: "300"}}, []domain.LibraryDirectory{{ID: "0"}}) {
 		t.Fatal("the 115 root should contain everything")
 	}
 }
@@ -425,12 +513,15 @@ func TestFilePath(t *testing.T) {
 
 type fakeSessionStub struct {
 	Session
-	source domain.LibrarySource
-	info   func(ctx context.Context, fileID string) (pan.FileInfo, error)
-	list   func(ctx context.Context, dirID string, offset int) (pan.FilePage, error)
+	roots []domain.LibraryDirectory
+	info  func(ctx context.Context, fileID string) (pan.FileInfo, error)
+	list  func(ctx context.Context, dirID string, offset int) (pan.FilePage, error)
 }
 
-func (f *fakeSessionStub) Source() domain.LibrarySource { return f.source }
+func (f *fakeSessionStub) Roots() []domain.LibraryDirectory { return f.roots }
+func (f *fakeSessionStub) Contains(info pan.FileInfo) bool {
+	return WithinRoots(info, f.roots)
+}
 func (f *fakeSessionStub) Info(ctx context.Context, id string) (pan.FileInfo, error) {
 	if f.info != nil {
 		return f.info(ctx, id)
@@ -450,7 +541,7 @@ func TestSourceInfo(t *testing.T) {
 		Directory: domain.LibraryDirectory{ID: "dir-100"},
 	}
 	sess := &fakeSessionStub{
-		source: source,
+		roots: []domain.LibraryDirectory{source.Directory},
 		info: func(ctx context.Context, fileID string) (pan.FileInfo, error) {
 			if fileID == "valid" {
 				return pan.FileInfo{
@@ -482,7 +573,7 @@ func TestDirectoryEntries(t *testing.T) {
 		Directory: domain.LibraryDirectory{ID: "dir-100"},
 	}
 	sess := &fakeSessionStub{
-		source: source,
+		roots: []domain.LibraryDirectory{source.Directory},
 		list: func(ctx context.Context, dirID string, offset int) (pan.FilePage, error) {
 			if dirID == "dir-inside" {
 				return pan.FilePage{

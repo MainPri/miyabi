@@ -24,10 +24,13 @@ func VideoFingerprint(files []pan.File) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// SnapshotMatches checks the exported videos and generated poster revision.
-func SnapshotMatches(record *ent.Movie, source domain.LibrarySource) bool {
+// SnapshotMatches checks the exported videos and generated poster revision
+// against the movie's whole indexed file set of one account. The fingerprint
+// spans every mounted root, so a movie present in several roots keeps one
+// stable snapshot no matter which root's scan published it.
+func SnapshotMatches(record *ent.Movie, accountID string) bool {
 	snapshot := record.MetadataSnapshot
-	if snapshot == nil || snapshot.AccountID != source.AccountID || snapshot.DirectoryID != source.Directory.ID || snapshot.PosterVersion != mediaimage.PosterVersion {
+	if snapshot == nil || snapshot.AccountID != accountID || snapshot.PosterVersion != mediaimage.PosterVersion {
 		return false
 	}
 	files := make([]pan.File, 0, len(record.Edges.Files))

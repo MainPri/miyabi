@@ -36,7 +36,7 @@ func (client *scanMetadataClient) ReadMetadata(_ context.Context, _, pickCode st
 func TestRescanRepairsAuxiliaryVideosAndSSNISubtitleAlias(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	ctx := t.Context()
-	source := *lib.drive.Source()
+	source := lib.drive.Sources()[0]
 	records := []struct {
 		path, code string
 		size       int64
@@ -148,7 +148,7 @@ func TestRescanRepairsAuxiliaryVideosAndSSNISubtitleAlias(t *testing.T) {
 func TestNFOIdentifiesOnlyEligibleVideosAndSmallFilesDoNotMakeDirectoryShared(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	ctx := t.Context()
-	source := *lib.drive.Source()
+	source := lib.drive.Sources()[0]
 	body, err := nfo.Encode(nfo.Movie{Code: "ABP-001", Title: "Fixture"})
 	if err != nil {
 		t.Fatal(err)

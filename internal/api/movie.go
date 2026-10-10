@@ -14,9 +14,14 @@ type LibraryManager interface {
 	Movies(context.Context, int, int) (lib.Page, error)
 	Movie(context.Context, int) (lib.MovieDetail, error)
 	Preview(context.Context, int, int) (domain.ImageCandidate, error)
-	StartScan(context.Context) (domain.TaskInfo, error)
-	StartRebuild(context.Context) (domain.TaskInfo, error)
+	StartScan(context.Context, string) ([]domain.TaskInfo, error)
+	StartRebuild(context.Context, string) ([]domain.TaskInfo, error)
 	RescrapeMovie(context.Context, int, string) (domain.TaskInfo, error)
+}
+
+// libraryScopeInput optionally names one mounted directory to operate on.
+type libraryScopeInput struct {
+	DirectoryID string `json:"directory_id" binding:"omitempty,number"`
 }
 
 func libraryMovieScrapeHandler(library LibraryManager) gin.HandlerFunc {
@@ -40,8 +45,12 @@ func libraryMovieScrapeHandler(library LibraryManager) gin.HandlerFunc {
 
 func libraryRebuildHandler(library LibraryManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		job, err := library.StartRebuild(c.Request.Context())
-		accepted(c, job, err)
+		input, ok := bindOptionalJSON[libraryScopeInput](c)
+		if !ok {
+			return
+		}
+		tasks, err := library.StartRebuild(c.Request.Context(), input.DirectoryID)
+		accepted(c, tasks, err)
 	}
 }
 
@@ -128,7 +137,11 @@ func libraryScanHandler(library LibraryManager, emby EmbyManager) gin.HandlerFun
 				return
 			}
 		}
-		task, err := library.StartScan(c.Request.Context())
-		accepted(c, task, err)
+		input, ok := bindOptionalJSON[libraryScopeInput](c)
+		if !ok {
+			return
+		}
+		tasks, err := library.StartScan(c.Request.Context(), input.DirectoryID)
+		accepted(c, tasks, err)
 	}
 }

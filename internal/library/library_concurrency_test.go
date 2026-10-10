@@ -16,7 +16,7 @@ import (
 func TestScanDiscardsLatePageAfterSourceChange(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	drive, ctx := lib.drive, t.Context()
-	source := *drive.Source()
+	source := drive.Sources()[0]
 	queued := lib.database.Task.Query().Where(task.TypeEQ("scan")).OnlyX(ctx)
 	payload := domain.ScanPayload{Source: source, Scan: domain.ScanProgress{Stage: "scanning"}}
 	if err := indexScanPage(ctx, lib, queued.ID, "previous-scan", "/Movies", []scan.Video{fixtureVideo("101", "ABP-001.mp4")}, &payload); err != nil {
@@ -41,8 +41,9 @@ func TestScanDiscardsLatePageAfterSourceChange(t *testing.T) {
 	if err := awaitPan(t, finished); !errors.Is(err, drivePkg.ErrSourceChanged) {
 		t.Fatalf("stale scan = %v", err)
 	}
+	// Unmounting pruned the root's index, so the late page cannot resurrect it.
 	files := lib.database.File.Query().AllX(ctx)
-	if len(files) != 1 || files[0].FileID != "101" || files[0].ScanID != "previous-scan" {
+	if len(files) != 0 {
 		t.Fatalf("stale page indexed or pruned files: %+v", files)
 	}
 	if lib.database.Task.Query().Where(task.TypeEQ("scrape")).ExistX(ctx) {

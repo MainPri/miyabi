@@ -298,7 +298,7 @@ func TestAccountVerificationIsCachedBriefly(t *testing.T) {
 	d.invalidateAccountCache()
 	for range 3 {
 		status, err := d.Account(t.Context())
-		if err != nil || !status.Connected || status.Directory == nil || status.Directory.ID != testSource.Directory.ID {
+		if err != nil || !status.Connected || len(status.Directories) != 1 || status.Directories[0].ID != testSource.Directory.ID {
 			t.Fatalf("account = %+v, %v", status, err)
 		}
 	}

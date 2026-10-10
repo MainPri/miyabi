@@ -41,7 +41,7 @@ func TestScanRefreshesOutdatedPostersOnceWithoutDownloadingCovers(t *testing.T) 
 	fixture.catalogue.cover = encode(cover)
 	fixture.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
 	fixture.addCatalogueMovie(fixtureDetail()) // A censored title must also use face detection.
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	fixture.runQueue(t)
@@ -79,7 +79,7 @@ func TestScanRefreshesOutdatedPostersOnceWithoutDownloadingCovers(t *testing.T) 
 		})
 	t.Cleanup(service.Close)
 	fixture.scrape = service
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	jobs := fixture.runQueue(t)
@@ -104,7 +104,7 @@ func TestScanRefreshesOutdatedPostersOnceWithoutDownloadingCovers(t *testing.T) 
 	if !maps.Equal(calls, fixture.catalogue.calls) {
 		t.Fatalf("refresh fetched upstream metadata or images: before=%v after=%v", calls, fixture.catalogue.calls)
 	}
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if jobs := fixture.runQueue(t); len(jobs) != 1 || jobs[0].Type != tasks.KindScan {

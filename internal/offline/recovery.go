@@ -82,12 +82,12 @@ func (s *Service) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	source := s.drive.Source()
-	if source == nil {
+	sources := s.drive.Sources()
+	if len(sources) == 0 {
 		return nil
 	}
 	records, err := s.database.OfflineDownload.Query().Where(
-		offlinedownload.AccountIDEQ(source.AccountID), offlinedownload.DirectoryIDEQ(source.Directory.ID),
+		accountDownloads(sources, sources[0].AccountID),
 		offlinedownload.StatusIn(offlinedownload.StatusRunning, offlinedownload.StatusFailed)).
 		Order(ent.Asc(offlinedownload.FieldID)).All(ctx)
 	if err != nil {

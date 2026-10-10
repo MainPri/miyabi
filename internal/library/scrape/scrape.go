@@ -15,6 +15,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/ent/file"
 	"github.com/ppxb/miyabi/internal/ent/movie"
+	"github.com/ppxb/miyabi/internal/ent/predicate"
 	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
 	"github.com/ppxb/miyabi/internal/nfo"
@@ -158,6 +159,18 @@ func (service *Service) begin(ctx context.Context, input MetadataPayload) (drive
 	return service.drive.OpenSource(ctx, input.Source)
 }
 
+// accountFiles scopes file queries to the account across every currently
+// mounted root, so a movie indexed in several roots is handled as a whole.
+func (service *Service) accountFiles(accountID string) predicate.File {
+	var roots []string
+	for _, source := range service.drive.Sources() {
+		if source.AccountID == accountID {
+			roots = append(roots, source.Directory.ID)
+		}
+	}
+	return database.AccountFiles(accountID, roots)
+}
+
 // Scrape runs one recoverable movie workflow: metadata, artwork, then export.
 func (service *Service) Scrape(ctx context.Context, job tasks.Job) error {
 	input, err := tasks.DecodePayload[Payload](job.Payload)
@@ -205,7 +218,7 @@ func (service *Service) Scrape(ctx context.Context, job tasks.Job) error {
 
 func (service *Service) prepareMetadata(ctx context.Context, sess drive.Session, taskID int, input *Payload) error {
 	record, err := service.db.Movie.Query().Where(movie.IDEQ(input.MovieID),
-		movie.HasFilesWith(database.LibraryFiles(input.Source))).Only(ctx)
+		movie.HasFilesWith(service.accountFiles(input.Source.AccountID))).Only(ctx)
 	if err != nil {
 		return fmt.Errorf("load indexed movie for metadata: %w", err)
 	}
@@ -268,7 +281,7 @@ func (service *Service) Finished(ctx context.Context, tx *ent.Tx, job tasks.Job,
 	update := tx.Movie.Update().Where(
 		movie.IDEQ(input.MovieID),
 		movie.ManualCodeEQ(input.ManualCode),
-		movie.HasFilesWith(database.LibraryFiles(input.Source)),
+		movie.HasFilesWith(service.accountFiles(input.Source.AccountID)),
 	)
 	if !input.Rebuild {
 		update.Where(movie.ScrapeStatusNEQ(movie.ScrapeStatusDone))
@@ -288,7 +301,7 @@ type MovieDirectory struct {
 
 // Directories returns all directories containing media files for the movie.
 func (service *Service) Directories(ctx context.Context, sess drive.Session, input MetadataPayload) ([]MovieDirectory, error) {
-	files, err := service.db.File.Query().Where(database.LibraryFiles(input.Source), file.MovieIDEQ(input.MovieID)).
+	files, err := service.db.File.Query().Where(service.accountFiles(input.Source.AccountID), file.MovieIDEQ(input.MovieID)).
 		Order(ent.Asc(file.FieldParentID), ent.Asc(file.FieldFileID)).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load movie file directories: %w", err)

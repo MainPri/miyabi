@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 
 import { useOfflineActivity } from '@/api/offline'
 import { useTasks } from '@/api/tasks'
-import { sourceKey } from '@/lib/source'
+import { mountedScopeKey } from '@/lib/source'
 import { useTaskConnection } from './task-events'
 import { diffTaskNotifications, type NotificationEntry } from './task-notification-diff'
 import { notifyBatchTask, notifyOfflineTask, notifyScanTask } from './task-toast'
@@ -19,8 +19,7 @@ export function TaskNotifications() {
 
   useEffect(() => {
     if (!tasks.data || !activity.data) return
-    const source = activity.data.source
-    const nextScope = sourceKey(source)
+    const nextScope = mountedScopeKey(activity.data.source, activity.data.directories)
     if (scope.current !== nextScope) {
       for (const id of previous.current.keys()) toast.dismiss(id)
       previous.current.clear()

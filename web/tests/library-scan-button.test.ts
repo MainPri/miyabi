@@ -35,7 +35,7 @@ test('scan control retains its header position and component identity while page
   const states = [
     {
       isSuccess: true,
-      data: { source: { account_id: '1', directory: { id: '2' } }, movies: [], total: 0 }
+      data: { directories: [{ id: '2' }], movies: [], total: 0 }
     },
     { isPending: true },
     { isError: true },
@@ -88,10 +88,10 @@ test('scan submission keeps success navigation and failure notification', () => 
   })!
   const button = elements(tree.props.children)[0]!
   ;(button.props.onClick as () => void)()
-  expect(mutate.mock.calls[0]![0]).toBe(false)
+  expect(mutate.mock.calls[0]![0]).toEqual({ rebuild: false })
   const callbacks = mutate.mock.calls[0]![1]
   const task = { id: 123 }
-  callbacks.onSuccess(task)
+  callbacks.onSuccess([task])
   expect(notifyScanTask).toHaveBeenCalledWith(task)
   expect(onStarted).toHaveBeenCalledOnce()
   callbacks.onError(new Error('request failed'))
@@ -122,7 +122,7 @@ test('rebuild control submits a full rebuild and both controls disable during pr
     controls.map(button => elements(button.props.children as ReactNode).at(-1)?.props.children)
   ).toEqual(['同步媒体库', '重建媒体库'])
   ;(controls[1]!.props.onClick as () => void)()
-  expect(mutate.mock.calls[0]![0]).toBe(true)
+  expect(mutate.mock.calls[0]![0]).toEqual({ rebuild: true })
   for (const button of buttons(LibraryScanButton({ ...props, scanning: true, rebuilding: true }))) {
     expect(button.props.disabled).toBe(true)
   }

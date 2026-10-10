@@ -33,16 +33,17 @@ func TestFailedRebuildMarksMovieFailedUntilSuccessfulRetry(t *testing.T) {
 	t.Cleanup(f.scrape.Close)
 	f.tasks.Registry().Register(tasks.NewHandler(tasks.KindScrape, f.scrape.Scrape, f.scrape.Finished).WithRetry(domain.RetryDelay))
 	f.drive.addFile("101", "10", "042126_100.mp4", 2<<30, []byte("video"))
-	if _, err := f.library.StartScan(ctx); err != nil {
+	if _, err := f.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	f.runQueue(t)
 	before := f.store.Client.Movie.Query().OnlyX(ctx)
 	source.fetchError = context.DeadlineExceeded
-	parent, err := f.library.StartRebuild(ctx)
+	parents, err := f.library.StartRebuild(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	parent := parents[0]
 	f.runQueue(t)
 	job := f.store.Client.Task.Query().Where(task.TypeEQ("scrape"), task.StatusEQ(task.StatusQueued)).OnlyX(ctx)
 	job.Update().SetRetryCount(tasks.MaxRetries).SetRetryAt(time.Now().Add(-time.Second)).ExecX(ctx)
@@ -98,7 +99,7 @@ func TestRebuildReplacesSavedMetadataAndPublishesNewPreviews(t *testing.T) {
 			t.Cleanup(f.scrape.Close)
 			f.tasks.Registry().Register(tasks.NewHandler(tasks.KindScrape, f.scrape.Scrape, f.scrape.Finished).WithRetry(domain.RetryDelay))
 			f.drive.addFile("101", "10", tc.code+".mp4", 2<<30, []byte("video"))
-			if _, err := f.library.StartScan(ctx); err != nil {
+			if _, err := f.library.StartScan(ctx, ""); err != nil {
 				t.Fatal(err)
 			}
 			f.runQueue(t)
@@ -109,17 +110,18 @@ func TestRebuildReplacesSavedMetadataAndPublishesNewPreviews(t *testing.T) {
 			official.fetchError, catalogue.fetchError = nil, nil
 			official.complete, catalogue.complete = true, true
 			// Ordinary scans intentionally preserve the old saved metadata.
-			if _, err := f.library.StartScan(ctx); err != nil {
+			if _, err := f.library.StartScan(ctx, ""); err != nil {
 				t.Fatal(err)
 			}
 			f.runQueue(t)
 			if official.queries != 1 || catalogue.queries != 1 {
 				t.Fatal("ordinary scan repeated metadata requests")
 			}
-			job, err := f.library.StartRebuild(ctx)
-			if err != nil || !job.Rebuild {
-				t.Fatalf("start rebuild: %+v %v", job, err)
+			jobs, err := f.library.StartRebuild(ctx, "")
+			if err != nil || len(jobs) != 1 || !jobs[0].Rebuild {
+				t.Fatalf("start rebuild: %+v %v", jobs, err)
 			}
+			job := jobs[0]
 			f.runQueue(t)
 			after := f.store.Client.Movie.Query().WithActors().WithTags().OnlyX(ctx)
 			if after.ID != before.ID || after.ScrapeStatus != movie.ScrapeStatusDone ||

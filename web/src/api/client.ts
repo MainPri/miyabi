@@ -41,8 +41,13 @@ export function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return requestJSON<T>(path, 'POST', body)
 }
 
-export function apiDelete<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'DELETE' })
+export function apiDelete<T>(path: string, body?: unknown): Promise<T> {
+  if (body === undefined) return request<T>(path, { method: 'DELETE' })
+  return request<T>(path, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
 }
 
 export function apiPatch<T>(path: string, body?: unknown): Promise<T> {

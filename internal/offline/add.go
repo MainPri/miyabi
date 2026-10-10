@@ -52,7 +52,7 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 		if existing.DirectoryID != directory.ID {
 			return domain.OfflineSubmission{}, domain.E(domain.KindConflict, "该磁力正在下载到另一个目录，请先在 115 中处理该任务", nil)
 		}
-		return service.submission(ctx, existing, &source)
+		return service.submission(ctx, existing)
 	}
 	if !ent.IsNotFound(err) {
 		return domain.OfflineSubmission{}, fmt.Errorf("find active offline task: %w", err)
@@ -63,7 +63,7 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 		candidateHash(hash), offlinedownload.StatusEQ(offlinedownload.StatusDone)).
 		Order(ent.Desc(offlinedownload.FieldID)).First(ctx)
 	if err == nil {
-		state, err := service.submission(ctx, previous, &source)
+		state, err := service.submission(ctx, previous)
 		if err != nil {
 			return domain.OfflineSubmission{}, err
 		}
@@ -115,5 +115,5 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 	if err != nil {
 		return domain.OfflineSubmission{}, err
 	}
-	return service.submission(submitContext, created, &source)
+	return service.submission(submitContext, created)
 }

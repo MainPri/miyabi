@@ -14,32 +14,37 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/task"
 )
 
-// Activity summarizes current offline download tasks alongside the active library source.
+// Activity summarizes current offline download tasks alongside the mounted sources.
 type Activity struct {
-	Source *domain.LibrarySource      `json:"source,omitempty"`
-	Tasks  []domain.OfflineSubmission `json:"tasks"`
+	Source      *domain.LibrarySource      `json:"source,omitempty"`
+	Directories []domain.LibraryDirectory  `json:"directories,omitempty"`
+	Tasks       []domain.OfflineSubmission `json:"tasks"`
 }
 
 // Activity only reads local tasks and the mounted file index. Keeping each
 // magnet's latest workflow also retains long downloads until their final state.
 func (service *Service) Activity(ctx context.Context) (Activity, error) {
 	result := Activity{Tasks: []domain.OfflineSubmission{}}
-	source := service.drive.Source()
-	result.Source = source
-	if source == nil {
+	sources := service.drive.Sources()
+	if len(sources) == 0 {
 		return result, nil
 	}
+	result.Source = &sources[0]
+	result.Directories = make([]domain.LibraryDirectory, 0, len(sources))
+	for _, source := range sources {
+		result.Directories = append(result.Directories, source.Directory)
+	}
 	records, err := latestOfflineTasks(ctx, service.database.OfflineDownload.Query().Where(
-		offlinedownload.AccountIDEQ(source.AccountID), offlinedownload.DirectoryIDEQ(source.Directory.ID)))
+		accountDownloads(sources, sources[0].AccountID)))
 	if err != nil {
 		return result, fmt.Errorf("load offline activity: %w", err)
 	}
-	result.Tasks, err = service.submissions(ctx, records, source)
+	result.Tasks, err = service.submissions(ctx, records, sources)
 	return result, err
 }
 
-func (service *Service) submission(ctx context.Context, record *ent.OfflineDownload, source *domain.LibrarySource) (domain.OfflineSubmission, error) {
-	items, err := service.submissions(ctx, []*ent.OfflineDownload{record}, source)
+func (service *Service) submission(ctx context.Context, record *ent.OfflineDownload) (domain.OfflineSubmission, error) {
+	items, err := service.submissions(ctx, []*ent.OfflineDownload{record}, service.drive.Sources())
 	if err != nil {
 		return domain.OfflineSubmission{}, err
 	}
@@ -48,12 +53,11 @@ func (service *Service) submission(ctx context.Context, record *ent.OfflineDownl
 
 // Project task workflows and file presence in batches. The global observer and
 // movie buttons share this view without a database query for every download.
-func (service *Service) submissions(ctx context.Context, records []*ent.OfflineDownload, source *domain.LibrarySource) ([]domain.OfflineSubmission, error) {
+func (service *Service) submissions(ctx context.Context, records []*ent.OfflineDownload, sources []domain.LibrarySource) ([]domain.OfflineSubmission, error) {
 	var scanIDs []int
 	var fileIDs []string
 	for _, record := range records {
-		if source == nil || source.AccountID != record.AccountID || source.Directory.ID != record.DirectoryID ||
-			record.Status == offlinedownload.StatusRunning {
+		if !recordMounted(record, sources) || record.Status == offlinedownload.StatusRunning {
 			continue
 		}
 		if record.ScanTaskID != 0 {
@@ -78,8 +82,7 @@ func (service *Service) submissions(ctx context.Context, records []*ent.OfflineD
 	indexed := make(map[string]*ent.Movie)
 	for start := 0; start < len(fileIDs); start += 500 {
 		files, err := service.database.File.Query().Where(
-			file.AccountIDEQ(source.AccountID),
-			file.RootIDEQ(source.Directory.ID),
+			file.AccountIDEQ(sources[0].AccountID),
 			file.FileIDIn(fileIDs[start:min(start+500, len(fileIDs))]...)).
 			Select(file.FieldFileID, file.FieldMovieID).
 			WithMovie(func(query *ent.MovieQuery) {
@@ -108,7 +111,7 @@ func (service *Service) submissions(ctx context.Context, records []*ent.OfflineD
 			Error:       record.Error,
 			Phase:       "available",
 		}
-		if source == nil || source.AccountID != record.AccountID || source.Directory.ID != record.DirectoryID {
+		if !recordMounted(record, sources) {
 			continue
 		}
 		item.CanCancel = record.Status == offlinedownload.StatusRunning || record.Status == offlinedownload.StatusFailed

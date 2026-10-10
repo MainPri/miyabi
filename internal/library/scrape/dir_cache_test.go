@@ -14,7 +14,7 @@ import (
 )
 
 type mockSession struct {
-	drive.Session // These cache tests exercise only Source, List and Info.
+	drive.Session // These cache tests exercise only Roots, List and Info.
 	source        domain.LibrarySource
 	listCalls     atomic.Int32
 	infoCalls     atomic.Int32
@@ -23,6 +23,12 @@ type mockSession struct {
 }
 
 func (m *mockSession) Source() domain.LibrarySource { return m.source }
+func (m *mockSession) Roots() []domain.LibraryDirectory {
+	return []domain.LibraryDirectory{m.source.Directory}
+}
+func (m *mockSession) Contains(info pan.FileInfo) bool {
+	return drive.WithinRoots(info, m.Roots())
+}
 func (m *mockSession) List(ctx context.Context, dirID string, offset int) (pan.FilePage, error) {
 	m.listCalls.Add(1)
 	if m.listFunc != nil {

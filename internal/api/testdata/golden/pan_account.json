@@ -20,9 +20,11 @@
       }
     }
   },
-  "directory": {
-    "id": "10",
-    "name": "Movies",
-    "path": "/Movies"
-  }
+  "directories": [
+    {
+      "id": "10",
+      "name": "Movies",
+      "path": "/Movies"
+    }
+  ]
 }

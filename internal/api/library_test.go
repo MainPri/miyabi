@@ -22,8 +22,11 @@ type libraryRebuildStub struct {
 	err error
 }
 
-func (stub *libraryRebuildStub) StartRebuild(context.Context) (domain.TaskInfo, error) {
-	return domain.TaskInfo{ID: 42, Type: "scan", Status: "queued", Rebuild: true}, stub.err
+func (stub *libraryRebuildStub) StartRebuild(_ context.Context, directoryID string) ([]domain.TaskInfo, error) {
+	if directoryID != "" {
+		return nil, domain.E(domain.KindNotFound, "该目录未挂载", nil)
+	}
+	return []domain.TaskInfo{{ID: 42, Type: "scan", Status: "queued", Rebuild: true}}, stub.err
 }
 
 func TestLibraryRebuildReturnsTaskAndPropagatesSourceErrors(t *testing.T) {

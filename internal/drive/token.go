@@ -94,10 +94,10 @@ func withPanToken[T any](ctx context.Context, d *Drive, expected snapshot, reque
 	}
 }
 
-func withPanSourceToken[T any](ctx context.Context, d *Drive, expected snapshot, request func(string) (T, error)) (T, error) {
+func withPanSourceToken[T any](ctx context.Context, d *Drive, expected snapshot, session *sourceSession, request func(string) (T, error)) (T, error) {
 	return withPanToken(ctx, d, expected, func(current snapshot) (T, error) {
 		// Check the same snapshot that supplied this attempt's credentials.
-		if !current.matchesSource(expected.source(), expected.authorizationVersion) {
+		if current.credentialVersion != session.credentialVersion || !current.matchesSource(session.source, session.epoch) {
 			var zero T
 			return zero, ErrSourceChanged
 		}

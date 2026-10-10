@@ -25,7 +25,7 @@ import (
 func TestScanPausesAtDirectoryCheckpointAndResumesRemainingWork(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	ctx := t.Context()
-	source := *lib.Source()
+	source := lib.Sources()[0]
 	rootCalls, childCalls := 0, 0
 	client.list = func(ctx context.Context, _, directoryID string, offset, limit int) (pan.FilePage, error) {
 		if directoryID == source.Directory.ID {
@@ -62,7 +62,7 @@ func TestScanPausesAtDirectoryCheckpointAndResumesRemainingWork(t *testing.T) {
 func TestScanResumesCanceledDirectoryAndPersistsAllChunks(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	ctx := t.Context()
-	source := *lib.drive.Source()
+	source := lib.drive.Sources()[0]
 	entries := make([]pan.File, 205)
 	for i := range entries {
 		entries[i] = pan.File{ID: fmt.Sprintf("video-%d", i), ParentID: source.Directory.ID,
@@ -117,7 +117,7 @@ func TestScanResumesAfterCommittedChunkWithoutDoubleCounting(t *testing.T) {
 		t.Run(fmt.Sprintf("chunk-%d", stopAfter), func(t *testing.T) {
 			lib, client := panConcurrencyFixture(t)
 			ctx := t.Context()
-			source := *lib.drive.Source()
+			source := lib.drive.Sources()[0]
 			entries := make([]pan.File, 205)
 			for i := range entries {
 				entries[i] = pan.File{ID: fmt.Sprintf("video-%d", i), ParentID: source.Directory.ID,
@@ -197,7 +197,7 @@ func TestScanResumesAfterCommittedChunkWithoutDoubleCounting(t *testing.T) {
 func TestScanResumesReconciliationWithoutWalkingAgain(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	ctx := t.Context()
-	source := *lib.drive.Source()
+	source := lib.drive.Sources()[0]
 	client.list = func(context.Context, string, string, int, int) (pan.FilePage, error) {
 		return pan.FilePage{}, errors.New("completed traversal must not restart")
 	}
@@ -312,7 +312,7 @@ func TestScanResolvesAndIndexesCurrentIdentityWithOneFileRead(t *testing.T) {
 func TestScanCheckpointResumePreservesPreviousScannedFiles(t *testing.T) {
 	lib, client := panConcurrencyFixture(t)
 	ctx := t.Context()
-	source := *lib.drive.Source()
+	source := lib.drive.Sources()[0]
 
 	rootDirID := source.Directory.ID
 	entries := map[string][]pan.File{

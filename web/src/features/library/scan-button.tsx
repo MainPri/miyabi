@@ -34,7 +34,8 @@ export function LibraryScanButton({
         const activityLabel = connected ? (rebuild ? '正在重建' : '正在同步') : '连接中'
         const label = active ? activityLabel : rebuild ? '重建媒体库' : '同步媒体库'
         const busy =
-          (active && connected) || (startScan.isPending && startScan.variables === rebuild)
+          (active && connected) ||
+          (startScan.isPending && startScan.variables?.rebuild === rebuild)
         return (
           <Button
             key={String(rebuild)}
@@ -42,19 +43,23 @@ export function LibraryScanButton({
             className="w-9 px-0 sm:w-auto sm:px-3"
             disabled={scanning || startScan.isPending}
             onClick={() =>
-              startScan.mutate(rebuild, {
-                onSuccess: task => {
-                  notifyScan(task)
-                  onStarted()
-                },
-                onError: error => {
-                  notifyTaskError(
-                    'scan:submit-error',
-                    rebuild ? '无法创建重建任务' : '无法创建同步任务',
-                    describeApiError(error)
-                  )
+              startScan.mutate(
+                { rebuild },
+                {
+                  onSuccess: tasks => {
+                    const latest = tasks[tasks.length - 1]
+                    if (latest) notifyScan(latest)
+                    onStarted()
+                  },
+                  onError: error => {
+                    notifyTaskError(
+                      'scan:submit-error',
+                      rebuild ? '无法创建重建任务' : '无法创建同步任务',
+                      describeApiError(error)
+                    )
+                  }
                 }
-              })
+              )
             }
           >
             {busy ? (

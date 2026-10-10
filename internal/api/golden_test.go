@@ -115,7 +115,7 @@ func goldenTime() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UT
 func (goldenLibrary) Movies(context.Context, int, int) (library.Page, error) {
 	source := goldenSource()
 	cover, poster, javdbID := "/api/library/artwork/aa.jpg", "/api/library/artwork/bb.jpg", "movie-exact"
-	return library.Page{Source: &source, Total: 2, Page: 1, HasMore: false, Movies: []library.Movie{
+	return library.Page{Directories: []domain.LibraryDirectory{source.Directory}, Total: 2, Page: 1, HasMore: false, Movies: []library.Movie{
 		{ID: 7, Code: "ABP-123", Title: "Localized title", JavDBID: &javdbID, Cover: &cover, Poster: &poster, Fanart: "/api/library/artwork/cc.jpg",
 			ReleaseDate: "2026-08-01", Duration: 120, Rating: 4.5,
 			Director: &library.Entity{ID: "director-1", Name: "Director"}, Maker: &library.Entity{ID: "maker-1", Name: "Maker"},
@@ -198,7 +198,7 @@ type goldenPan struct {
 
 func (goldenPan) Account(context.Context) (drive.AccountStatus, error) {
 	directory := goldenSource().Directory
-	return drive.AccountStatus{Connected: true, Directory: &directory, Account: &pan.Account{
+	return drive.AccountStatus{Connected: true, Directories: []domain.LibraryDirectory{directory}, Account: &pan.Account{
 		ID: "100", Name: "fixture", Avatar: "https://avatar.example/100.png", Level: "vip",
 		Space: pan.AccountSpace{Total: pan.SpaceAmount{Bytes: 1 << 40, Formatted: "1TB"}, Used: pan.SpaceAmount{Bytes: 1 << 30, Formatted: "1GB"}, Remaining: pan.SpaceAmount{Bytes: (1 << 40) - (1 << 30), Formatted: "1023GB"}},
 	}}, nil

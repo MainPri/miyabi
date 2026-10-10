@@ -78,8 +78,8 @@ func TestMovieRescrapeDoesNotBlockMountEnqueue(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lib, record, _ := movieActionFixture(t)
 		client := stubOf(t, lib.drive)
-		client.list = func(context.Context, string, string, int, int) (pan.FilePage, error) {
-			return pan.FilePage{Path: []pan.Directory{{ID: "20", Name: "Other"}}}, nil
+		client.list = func(_ context.Context, _, id string, _, _ int) (pan.FilePage, error) {
+			return pan.FilePage{Path: []pan.Directory{{ID: id, Name: "Other"}}}, nil
 		}
 		mountEntered := make(chan struct{})
 		resumeMount := make(chan struct{})
@@ -119,11 +119,13 @@ func TestMovieRescrapeDoesNotBlockMountEnqueue(t *testing.T) {
 			<-rescraped
 			t.Fatal("mount enqueue and movie rescrape are waiting for each other's locks")
 		}
-		if err := <-rescraped; !domain.IsKind(err, domain.KindNotFound) {
-			t.Fatalf("movie from the previous mount was not rejected: %v", err)
+		// The mount added a sibling root; the movie's own root is untouched, so
+		// the rescrape proceeds instead of being rejected.
+		if err := <-rescraped; err != nil {
+			t.Fatalf("rescrape after a sibling mount failed: %v", err)
 		}
-		if source := lib.drive.Source(); source == nil || source.Directory.ID != "20" {
-			t.Fatalf("new mount was not retained: %+v", source)
+		if sources := lib.drive.Sources(); len(sources) != 2 || sources[1].Directory.ID != "20" {
+			t.Fatalf("new mount was not retained: %+v", sources)
 		}
 		queued := lib.database.Task.Query().Where(task.TypeEQ("scan"), task.StatusEQ(task.StatusQueued)).OnlyX(t.Context())
 		payload, err := tasks.DecodePayload[domain.ScanPayload](queued.Payload)
@@ -131,11 +133,11 @@ func TestMovieRescrapeDoesNotBlockMountEnqueue(t *testing.T) {
 			t.Fatalf("new mount lost its scan: %+v %v", payload, err)
 		}
 		got := lib.database.Movie.GetX(t.Context(), record.ID)
-		if got.Code != record.Code || got.ManualCode != "" || got.ScrapeStatus != movie.ScrapeStatusDone {
-			t.Fatalf("rejected rescrape changed the old movie: %+v", got)
+		if got.Code != "IPX-123" || got.ManualCode != "IPX-123" || got.ScrapeStatus != movie.ScrapeStatusPending {
+			t.Fatalf("correcting rescrape did not persist the new identity: %+v", got)
 		}
-		if lib.database.Task.Query().Where(task.TypeEQ("scrape")).ExistX(t.Context()) {
-			t.Fatal("rejected rescrape created a metadata task")
+		if !lib.database.Task.Query().Where(task.TypeEQ("scrape")).ExistX(t.Context()) {
+			t.Fatal("correcting rescrape did not create a metadata task")
 		}
 	})
 }
@@ -176,9 +178,9 @@ func TestMovieRescrapeQueueWaitDoesNotHoldDatabaseWriter(t *testing.T) {
 		if err := lib.drive.ClearDirectory(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		got := lib.database.Movie.GetX(t.Context(), record.ID)
-		if got.Code != record.Code || got.ManualCode != "" || got.ScrapeStatus != movie.ScrapeStatusDone {
-			t.Fatalf("canceled rescrape changed the movie: %+v", got)
+		// Unmounting pruned the movie's only root, so its record is gone.
+		if count := lib.database.Movie.Query().Where(movie.IDEQ(record.ID)).CountX(t.Context()); count != 0 {
+			t.Fatalf("canceled rescrape left the pruned movie behind: %d", count)
 		}
 		if lib.database.Task.Query().Where(task.TypeEQ("scrape")).ExistX(t.Context()) {
 			t.Fatal("canceled rescrape created a metadata task")
@@ -245,11 +247,11 @@ func TestManualCorrectionSurvivesRebuildAndStaleTaskFailure(t *testing.T) {
 		t.Error("manual correction read a stale remote NFO")
 		return nil, errors.New("stale NFO")
 	}
-	queued, err := lib.StartRebuild(ctx)
+	queued, err := lib.StartRebuild(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent := lib.database.Task.GetX(ctx, queued.ID)
+	parent := lib.database.Task.GetX(ctx, queued[0].ID)
 	if err := lib.Scan(ctx, tasks.Job{ID: parent.ID, Payload: parent.Payload}); err != nil {
 		t.Fatal(err)
 	}

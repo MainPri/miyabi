@@ -16,6 +16,7 @@ type DriveManager interface {
 	Disconnect(context.Context) (drive.AccountStatus, error)
 	Files(context.Context, string, int) (pan.FilePage, error)
 	SelectDirectory(context.Context, string) (domain.LibraryDirectory, error)
+	RemoveDirectory(context.Context, string) error
 	ClearDirectory(context.Context) error
 }
 
@@ -30,6 +31,10 @@ type panFilesQuery struct {
 
 type panDirectoryInput struct {
 	ID string `json:"id" binding:"required,number"`
+}
+
+type panDirectoryRemoval struct {
+	ID string `json:"id" binding:"omitempty,number"`
 }
 
 func panAccountHandler(pan DriveManager) gin.HandlerFunc {
@@ -88,7 +93,16 @@ func panSelectDirectoryHandler(pan DriveManager) gin.HandlerFunc {
 
 func panClearDirectoryHandler(pan DriveManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		err := pan.ClearDirectory(c.Request.Context())
-		respond(c, nil, err)
+		// An optional ID unmounts one directory; an empty body unmounts all.
+		input, ok := bindOptionalJSON[panDirectoryRemoval](c)
+		if !ok {
+			return
+		}
+		if input.ID != "" {
+			err := pan.RemoveDirectory(c.Request.Context(), input.ID)
+			respond(c, nil, err)
+			return
+		}
+		respond(c, nil, pan.ClearDirectory(c.Request.Context()))
 	}
 }

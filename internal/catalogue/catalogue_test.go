@@ -23,8 +23,11 @@ type stubLocalState struct {
 	movies []domain.LocalMovie
 }
 
-func (s *stubLocalState) Source() *domain.LibrarySource {
-	return s.source
+func (s *stubLocalState) Sources() []domain.LibrarySource {
+	if s.source == nil {
+		return nil
+	}
+	return []domain.LibrarySource{*s.source}
 }
 
 func (s *stubLocalState) MatchingMovies(_ context.Context, ids, codes []string) ([]domain.LocalMovie, error) {

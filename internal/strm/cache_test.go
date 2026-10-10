@@ -319,7 +319,7 @@ func TestStreamCacheFollowsAuthorizationAndMountChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(3)
-	if _, err := relay.drive.SelectDirectory(t.Context(), "10"); err != nil {
+	if err := relay.drive.RemoveDirectory(t.Context(), "10"); err != nil {
 		t.Fatal(err)
 	}
 	check(4)
@@ -354,7 +354,11 @@ func TestStreamLookupRejectsSourceChangeDuringRequest(t *testing.T) {
 		finished := make(chan error, 1)
 		go func() { _, err := relay.StreamURL(t.Context(), "101", ""); finished <- err }()
 		synctest.Wait()
+		// A sibling mount stays harmless; removing the pinned root is not.
 		if _, err := relay.drive.SelectDirectory(t.Context(), "20"); err != nil {
+			t.Fatal(err)
+		}
+		if err := relay.drive.RemoveDirectory(t.Context(), "10"); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := relay.StreamURL(t.Context(), "101", ""); err != nil || calls.Load() != 2 {

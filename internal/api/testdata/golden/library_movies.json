@@ -1,12 +1,11 @@
 {
-  "source": {
-    "account_id": "100",
-    "directory": {
+  "directories": [
+    {
       "id": "10",
       "name": "Movies",
       "path": "/Movies"
     }
-  },
+  ],
   "movies": [
     {
       "id": 7,

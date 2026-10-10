@@ -27,7 +27,7 @@ func TestVideoFingerprintDeterministic(t *testing.T) {
 
 func TestSnapshotMatches(t *testing.T) {
 	video := pan.File{ID: "v1", ParentID: "dir-1", Name: "ABP-001.mp4", SHA1: "sha-video", Size: 1 << 30}
-	source := domain.LibrarySource{AccountID: "account", Directory: domain.LibraryDirectory{ID: "root"}}
+	account := "account"
 	for _, tc := range []struct {
 		name   string
 		change func(*ent.Movie)
@@ -37,7 +37,7 @@ func TestSnapshotMatches(t *testing.T) {
 		{name: "missing snapshot", change: func(m *ent.Movie) { m.MetadataSnapshot = nil }},
 		{name: "outdated poster", change: func(m *ent.Movie) { m.MetadataSnapshot.PosterVersion = 0 }},
 		{name: "other account", change: func(m *ent.Movie) { m.MetadataSnapshot.AccountID = "other" }},
-		{name: "other root", change: func(m *ent.Movie) { m.MetadataSnapshot.DirectoryID = "other" }},
+		{name: "published by another root", want: true, change: func(m *ent.Movie) { m.MetadataSnapshot.DirectoryID = "other" }},
 		{name: "moved video", change: func(m *ent.Movie) { m.Edges.Files[0].ParentID = "other" }},
 		{name: "renamed video", change: func(m *ent.Movie) { m.Edges.Files[0].Name = "renamed.mp4" }},
 		{name: "changed content", change: func(m *ent.Movie) { m.Edges.Files[0].Sha1 = "changed" }},
@@ -46,13 +46,13 @@ func TestSnapshotMatches(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			record := &ent.Movie{
-				MetadataSnapshot: &domain.MetadataSnapshot{AccountID: source.AccountID, DirectoryID: source.Directory.ID, Videos: VideoFingerprint([]pan.File{video}), PosterVersion: mediaimage.PosterVersion},
+				MetadataSnapshot: &domain.MetadataSnapshot{AccountID: account, DirectoryID: "root", Videos: VideoFingerprint([]pan.File{video}), PosterVersion: mediaimage.PosterVersion},
 				Edges:            ent.MovieEdges{Files: []*ent.File{{FileID: video.ID, ParentID: video.ParentID, Name: video.Name, Sha1: video.SHA1, Size: video.Size}}},
 			}
 			if tc.change != nil {
 				tc.change(record)
 			}
-			if got := SnapshotMatches(record, source); got != tc.want {
+			if got := SnapshotMatches(record, account); got != tc.want {
 				t.Fatalf("match = %t, want %t", got, tc.want)
 			}
 		})

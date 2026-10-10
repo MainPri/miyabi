@@ -288,11 +288,15 @@ function deferredResponses(f: ReturnType<typeof fixture>, readPath: string) {
 }
 
 function observeActivity(f: ReturnType<typeof fixture>, tasks: OfflineActivity['tasks']) {
-  f.client.setQueryData(offlineKeys.activity, { source, tasks })
+  f.client.setQueryData(offlineKeys.activity, {
+    source,
+    directories: [{ id: source.directory.id }],
+    tasks
+  })
   f.client.setQueryData(panKeys.account, {
     connected: true,
     account: { id: source.account_id },
-    directory: source.directory
+    directories: [source.directory]
   })
   const observer = new QueryObserver(f.client, {
     queryKey: offlineKeys.activity,
@@ -363,7 +367,7 @@ for (const scan of [
     f.client.setQueryData(panKeys.account, {
       connected: true,
       account: { id: 'acc2' },
-      directory: { id: 'dir2' }
+      directories: [{ id: 'dir2' }]
     })
     result.resolve(Response.json(queuedScan))
     await vi.advanceTimersByTimeAsync(0)
@@ -488,11 +492,11 @@ for (const { action, useOperation } of [
     )
     await vi.advanceTimersByTimeAsync(0)
     const nextSource = { account_id: 'acc2', directory: { id: 'dir2', name: 'New', path: '/New' } }
-    const current = { source: nextSource, tasks: [] }
+    const current = { source: nextSource, directories: [{ id: 'dir2' }], tasks: [] }
     f.client.setQueryData(panKeys.account, {
       connected: true,
       account: { id: 'acc2' },
-      directory: nextSource.directory
+      directories: [nextSource.directory]
     })
     f.client.setQueryData(offlineKeys.activity, current)
     result.resolve(Response.json(original))

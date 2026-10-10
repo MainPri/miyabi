@@ -26,13 +26,13 @@ type panSpaceAmountResponse struct {
 }
 
 type panAccountStatusResponse struct {
-	Connected bool                     `json:"connected"`
-	Account   *panAccountResponse      `json:"account,omitempty"`
-	Directory *domain.LibraryDirectory `json:"directory,omitempty"`
+	Connected   bool                      `json:"connected"`
+	Account     *panAccountResponse       `json:"account,omitempty"`
+	Directories []domain.LibraryDirectory `json:"directories,omitempty"`
 }
 
 func accountResponse(status drive.AccountStatus) panAccountStatusResponse {
-	response := panAccountStatusResponse{Connected: status.Connected, Directory: status.Directory}
+	response := panAccountStatusResponse{Connected: status.Connected, Directories: status.Directories}
 	if account := status.Account; account != nil {
 		response.Account = &panAccountResponse{
 			ID: account.ID, Name: account.Name, Avatar: account.Avatar, Level: account.Level,

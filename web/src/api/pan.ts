@@ -36,7 +36,7 @@ export type PanAccount = {
 export type PanAccountStatus = {
   connected: boolean
   account?: PanAccount
-  directory?: PanDirectory
+  directories?: PanDirectory[]
 }
 
 type PanFilePage = {
@@ -133,6 +133,15 @@ export function usePanFiles(accountID: string, directoryID: string, page: number
   })
 }
 
+function withDirectories(
+  status: PanAccountStatus | undefined,
+  accountID: string,
+  update: (directories: PanDirectory[]) => PanDirectory[]
+): PanAccountStatus | undefined {
+  if (!status || status.account?.id !== accountID) return status
+  return { ...status, directories: update(status.directories ?? []) }
+}
+
 export function useSelectPanDirectory(accountID: string) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -141,20 +150,26 @@ export function useSelectPanDirectory(accountID: string) {
       invalidatePanSource(queryClient)
       void queryClient.invalidateQueries({ queryKey: taskKeys.all })
       queryClient.setQueryData<PanAccountStatus>(panKeys.account, status =>
-        status?.account?.id === accountID ? { ...status, directory } : status
+        withDirectories(status, accountID, directories => [
+          ...directories.filter(entry => entry.id !== directory.id),
+          directory
+        ])
       )
     }
   })
 }
 
-export function useClearPanDirectory(accountID: string) {
+export function useRemovePanDirectory(accountID: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => apiDelete<null>('/api/pan/directory'),
-    onSuccess: () => {
+    mutationFn: (id: string) => apiDelete<null>('/api/pan/directory', { id }),
+    onSuccess: (_result, id) => {
       invalidatePanSource(queryClient)
+      void queryClient.invalidateQueries({ queryKey: taskKeys.all })
       queryClient.setQueryData<PanAccountStatus>(panKeys.account, status =>
-        status?.account?.id === accountID ? { ...status, directory: undefined } : status
+        withDirectories(status, accountID, directories =>
+          directories.filter(directory => directory.id !== id)
+        )
       )
     }
   })

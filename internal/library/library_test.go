@@ -42,7 +42,7 @@ func TestLibraryListingAndMatchingShareLocalAndMountedScope(t *testing.T) {
 			visible = visible[:2]
 		}
 		page, err := lib.Movies(ctx, 1, 20)
-		if err != nil || page.Total != len(visible) || (page.Source != nil) != mounted {
+		if err != nil || page.Total != len(visible) || len(page.Directories) != 0 != mounted {
 			t.Fatalf("mounted=%t page=%+v error=%v", mounted, page, err)
 		}
 		matches, err := lib.MatchingMovies(ctx, nil, codes)
@@ -107,7 +107,7 @@ func TestLibraryPageLoadsCardMetadataWithScopedCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Source == nil || *page.Source != payload.Source || page.Total != 2 || page.HasMore || len(page.Movies) != 2 {
+	if len(page.Directories) != 1 || page.Directories[0].ID != payload.Source.Directory.ID || page.Total != 2 || page.HasMore || len(page.Movies) != 2 {
 		t.Fatalf("library statistics escaped the mounted source: %#v", page)
 	}
 	wantQueries := map[string]int{"*ent.FileQuery": 1, "*ent.MovieQuery": 1, "*ent.TagQuery": 1, "*ent.ActorQuery": 1}

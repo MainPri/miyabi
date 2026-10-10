@@ -36,12 +36,13 @@ func (s *Service) advance(ctx context.Context, id int, requested string) (domain
 	if err != nil {
 		return domain.OfflineSubmission{}, err
 	}
-	source := s.drive.Source()
-	if source == nil || source.AccountID != record.AccountID || source.Directory.ID != record.DirectoryID {
+	sources := s.drive.Sources()
+	source := recordSource(record, sources)
+	if source == nil {
 		return domain.OfflineSubmission{}, drive.ErrSourceChanged
 	}
 	if record.Status == offlinedownload.StatusDone || record.Status == offlinedownload.StatusCancelled {
-		return s.submission(ctx, record, source)
+		return s.submission(ctx, record)
 	}
 	cfg, prefs, err := s.config(ctx)
 	if err != nil {
@@ -49,7 +50,7 @@ func (s *Service) advance(ctx context.Context, id int, requested string) (domain
 	}
 	state := recovery(record, prefs)
 	if requested == actionSwitch && !cfg.AutoSwitch {
-		return s.submission(ctx, record, source)
+		return s.submission(ctx, record)
 	}
 	if requested == actionCancel {
 		state.Action, state.NextHash = actionCancel, ""
@@ -65,7 +66,7 @@ func (s *Service) advance(ctx context.Context, id int, requested string) (domain
 			}
 			s.tasks.NotifyOfflineChanged()
 			record.Recovery = state
-			return s.submission(ctx, record, source)
+			return s.submission(ctx, record)
 		}
 		state.Action, state.NextHash = actionSwitch, next
 		state.Manual = requested == "next"
@@ -75,7 +76,7 @@ func (s *Service) advance(ctx context.Context, id int, requested string) (domain
 		}
 	}
 	if state.Action == "" {
-		return s.submission(ctx, record, source)
+		return s.submission(ctx, record)
 	}
 	sess, err := s.drive.OpenSource(ctx, *source)
 	if err != nil {
@@ -95,13 +96,13 @@ func (s *Service) advance(ctx context.Context, id int, requested string) (domain
 		return domain.OfflineSubmission{}, err
 	}
 	if current.Status == offlinedownload.StatusDone || current.Status == offlinedownload.StatusCancelled {
-		return s.submission(ctx, current, source)
+		return s.submission(ctx, current)
 	}
 	if requested == actionCancel {
 		state = recovery(current, prefs)
 		state.Action, state.NextHash = actionCancel, ""
 	} else if record.Recovery != nil && record.Recovery.Action == actionSubmit && current.Recovery != nil && current.Recovery.Action == "" {
-		return s.submission(ctx, current, source)
+		return s.submission(ctx, current)
 	}
 	record = current
 	if err := ctx.Err(); err != nil {
@@ -133,7 +134,7 @@ func (s *Service) advance(ctx context.Context, id int, requested string) (domain
 		return domain.OfflineSubmission{}, err
 	}
 	s.tasks.NotifyOfflineChanged()
-	return s.submission(ctx, record, source)
+	return s.submission(ctx, record)
 }
 
 func (s *Service) removeCurrent(ctx context.Context, sess drive.Session, record *ent.OfflineDownload, state *download.Recovery) error {

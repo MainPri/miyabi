@@ -17,6 +17,20 @@ func bindJSON[T any](c *gin.Context) (T, bool) {
 	return target, true
 }
 
+// bindOptionalJSON binds a JSON body that may be absent. A missing body binds
+// the zero value.
+func bindOptionalJSON[T any](c *gin.Context) (T, bool) {
+	var target T
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return target, true
+	}
+	if err := c.ShouldBindJSON(&target); err != nil {
+		c.Error(badRequest(err))
+		return target, false
+	}
+	return target, true
+}
+
 // bindQuery binds query string parameters into a new instance of T.
 // On failure, it attaches a 400 badRequest error to the context and returns false.
 func bindQuery[T any](c *gin.Context) (T, bool) {

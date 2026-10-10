@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { LibraryMovieCard } from '@/features/library/movie-card'
 import { LibraryScanButton } from '@/features/library/scan-button'
 import { useTaskConnection } from '@/features/tasks/task-events'
-import { sameSource } from '@/lib/source'
+import { inDirectories } from '@/lib/source'
 
 export function LibraryPage({
   page,
@@ -25,8 +25,11 @@ export function LibraryPage({
   const library = useLibraryMovies(page)
   const tasks = useTasks()
   const connection = useTaskConnection()
-  const source = library.data?.source
-  const sourceTasks = tasks.data?.filter(isScanTask).filter(task => sameSource(task.source, source))
+  const directories = library.data?.directories
+  const mounted = !!directories?.length
+  const sourceTasks = tasks.data
+    ?.filter(isScanTask)
+    .filter(task => inDirectories(task.source, directories))
   const latest = sourceTasks?.find(task => !task.movie_id && !task.offline_task_id)
   const scanning = latest !== undefined && isTaskActive(latest)
   const processingMovies = new Set(sourceTasks?.filter(isTaskActive).map(task => task.movie_id))
@@ -36,13 +39,13 @@ export function LibraryPage({
       <PageHeader title="媒体库" description="来自 115 网盘的影片" inlineActions>
         <LibraryScanButton
           loading={library.isPending}
-          available={!!source}
+          available={mounted}
           scanning={scanning}
           rebuilding={!!latest?.rebuild}
           connected={connection.status === 'connected'}
           onStarted={() => onPageChange(1)}
         />
-        {library.isSuccess && !source ? (
+        {library.isSuccess && !mounted ? (
           <Button asChild>
             <Link to="/settings">挂载媒体目录</Link>
           </Button>
@@ -75,7 +78,7 @@ export function LibraryPage({
                 <LibraryMovieCard
                   key={movie.id}
                   movie={movie}
-                  busy={!source || scanning || processingMovies.has(movie.id)}
+                  busy={!mounted || scanning || processingMovies.has(movie.id)}
                 />
               ))}
             </MovieGridLayout>
@@ -83,7 +86,7 @@ export function LibraryPage({
             <EmptyState
               className="min-h-0 flex-1 py-12"
               title={
-                !source
+                !mounted
                   ? '登录 115 并挂载媒体目录后，将自动同步入库'
                   : scanning
                     ? connection.status === 'connected'

@@ -20,11 +20,11 @@ func (service *Service) Sync(ctx context.Context) error {
 		return err
 	}
 
-	source := service.drive.Source()
-	if source == nil {
+	sources := service.drive.Sources()
+	if len(sources) == 0 {
 		return nil
 	}
-	sess, err := service.drive.OpenSource(ctx, *source)
+	sess, err := service.drive.OpenSource(ctx, sources[0])
 	if err != nil {
 		if errors.Is(err, drive.ErrMediaDirectoryRequired) {
 			return nil
@@ -33,10 +33,10 @@ func (service *Service) Sync(ctx context.Context) error {
 	}
 
 	records, err := service.database.OfflineDownload.Query().Where(
-		offlinedownload.AccountIDEQ(source.AccountID),
+		offlinedownload.AccountIDEQ(sources[0].AccountID),
 		offlinedownload.Or(offlinedownload.StatusEQ(offlinedownload.StatusRunning),
 			offlinedownload.And(offlinedownload.StatusEQ(offlinedownload.StatusDone),
-				offlinedownload.DirectoryIDEQ(source.Directory.ID), offlinedownload.ScanTaskIDEQ(0),
+				offlinedownload.DirectoryIDIn(mountedRoots(sources, sources[0].AccountID)...), offlinedownload.ScanTaskIDEQ(0),
 				offlinedownload.Or(offlinedownload.FileIDNEQ(""), offlinedownload.AwaitingLocationEQ(true))))).
 		Order(ent.Desc(offlinedownload.FieldID)).All(ctx)
 	if err != nil {
@@ -226,9 +226,8 @@ func (service *Service) completeTask(ctx context.Context, tx *ent.Tx, record *en
 		fileID = record.FileID
 	}
 	scanID := record.ScanTaskID
-	source := service.drive.Source()
-	if fileID != "" && scanID == 0 && source != nil &&
-		source.Directory.ID == record.DirectoryID && source.AccountID == record.AccountID {
+	source := recordSource(record, service.drive.Sources())
+	if fileID != "" && scanID == 0 && source != nil {
 		var err error
 		scanID, err = service.library.EnqueueTargetedScan(ctx, tx, *source, fileID, record.ID, record.Code, record.JavdbID)
 		if err != nil {

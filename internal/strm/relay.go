@@ -45,7 +45,7 @@ func (relay *Relay) StreamURL(ctx context.Context, fileID, userAgent string) (st
 		return "", err
 	}
 	source := sess.Source()
-	key := fmt.Sprintf("%d:%q:%q:%q:%q", sess.AuthorizationVersion(), source.AccountID, source.Directory.ID, fileID, ua)
+	key := fmt.Sprintf("%d:%q:%q:%q", sess.AuthorizationVersion(), source.AccountID, fileID, ua)
 	result := relay.resolving.DoChan(key, func() (any, error) {
 		done, ok := relay.drive.StartWork()
 		if !ok {

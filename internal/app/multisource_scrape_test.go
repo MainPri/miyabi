@@ -78,7 +78,7 @@ func TestTransientImageFailureAutomaticallyResumesSavedMetadata(t *testing.T) {
 	t.Cleanup(f.scrape.Close)
 	f.tasks.Registry().Register(tasks.NewHandler(tasks.KindScrape, f.scrape.Scrape, f.scrape.Finished).WithRetry(domain.RetryDelay))
 	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
-	if _, err := f.library.StartScan(t.Context()); err != nil {
+	if _, err := f.library.StartScan(t.Context(), ""); err != nil {
 		t.Fatal(err)
 	}
 	jobs := f.runQueue(t)
@@ -110,7 +110,7 @@ func TestScrapeDoesNotExportFilesRemovedByConcurrentScan(t *testing.T) {
 	ctx := t.Context()
 	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
 	f.addCatalogueMovie(fixtureDetail())
-	if _, err := f.library.StartScan(ctx); err != nil {
+	if _, err := f.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	scan, err := f.tasks.Queue().Claim(ctx, []tasks.Kind{tasks.KindScan})
@@ -161,7 +161,7 @@ func TestSharedRunningScrapeRecoversWhenRescanAddsAPart(t *testing.T) {
 	f.addCatalogueMovie(fixtureDetail())
 	runScan := func() {
 		t.Helper()
-		if _, err := f.library.StartScan(ctx); err != nil {
+		if _, err := f.library.StartScan(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
 		job, err := f.tasks.Queue().Claim(ctx, []tasks.Kind{tasks.KindScan})
@@ -243,7 +243,7 @@ func TestJavDBMetadataAndArtworkCheckpointSurvivePublishFailure(t *testing.T) {
 		})
 	})
 	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
-	if _, err := f.library.StartScan(t.Context()); err != nil {
+	if _, err := f.library.StartScan(t.Context(), ""); err != nil {
 		t.Fatal(err)
 	}
 	jobs := f.runQueue(t)
@@ -287,7 +287,7 @@ func TestMultiSourceScrapeWithoutJavDBResumesAfterImageFailure(t *testing.T) {
 	t.Cleanup(service.Close)
 	f.scrape = service
 	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
-	if _, err := f.library.StartScan(t.Context()); err != nil {
+	if _, err := f.library.StartScan(t.Context(), ""); err != nil {
 		t.Fatal(err)
 	}
 	jobs := f.runQueue(t)
@@ -324,7 +324,7 @@ func TestMetadataCheckpointFailureRollsBackMovieAndTask(t *testing.T) {
 	f := newPipelineFixture(t)
 	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
 	f.addCatalogueMovie(fixtureDetail())
-	if _, err := f.library.StartScan(t.Context()); err != nil {
+	if _, err := f.library.StartScan(t.Context(), ""); err != nil {
 		t.Fatal(err)
 	}
 	failure := errors.New("metadata checkpoint rollback")

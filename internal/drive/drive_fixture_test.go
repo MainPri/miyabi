@@ -22,19 +22,19 @@ var testSource = domain.LibrarySource{
 // stubClient is a 115 client whose calls can be replaced per test. Unset
 // calls behave like a healthy account so fixtures need no boilerplate.
 type stubClient struct {
-	account        func(context.Context, string) (pan.Account, error)
-	beginLogin     func(context.Context) (*pan.Login, error)
-	loginStatus    func(context.Context, *pan.Login) (pan.LoginState, error)
-	exchangeToken  func(context.Context, *pan.Login) (pan.Tokens, error)
-	refreshToken   func(context.Context, string) (pan.Tokens, error)
-	list           func(context.Context, string, string, int, int) (pan.FilePage, error)
-	info           func(context.Context, string, string) (pan.FileInfo, error)
-	readMetadata   func(context.Context, string, string, int64) ([]byte, error)
-	addOffline     func(context.Context, string, string, string) (string, error)
-	removeOffline  func(context.Context, string, string) error
-	offlineTasks   func(context.Context, string, int) (pan.OfflinePage, error)
-	playURL        func(context.Context, string, string, string) ([]pan.PlaySource, error)
-	downloadURL    func(context.Context, string, string) (string, error)
+	account       func(context.Context, string) (pan.Account, error)
+	beginLogin    func(context.Context) (*pan.Login, error)
+	loginStatus   func(context.Context, *pan.Login) (pan.LoginState, error)
+	exchangeToken func(context.Context, *pan.Login) (pan.Tokens, error)
+	refreshToken  func(context.Context, string) (pan.Tokens, error)
+	list          func(context.Context, string, string, int, int) (pan.FilePage, error)
+	info          func(context.Context, string, string) (pan.FileInfo, error)
+	readMetadata  func(context.Context, string, string, int64) ([]byte, error)
+	addOffline    func(context.Context, string, string, string) (string, error)
+	removeOffline func(context.Context, string, string) error
+	offlineTasks  func(context.Context, string, int) (pan.OfflinePage, error)
+	playURL       func(context.Context, string, string, string) ([]pan.PlaySource, error)
+	downloadURL   func(context.Context, string, string) (string, error)
 }
 
 func (c *stubClient) Close() {}
@@ -183,8 +183,8 @@ func loginTestAccount(t testing.TB, d *Drive) {
 	}
 }
 
-// selectTestDirectory mounts the directory as the library root, answering the
-// mount listing so the stored directory equals the given value.
+// selectTestDirectory mounts the directory as an additional scan root,
+// answering the mount listing so the stored directory equals the given value.
 func selectTestDirectory(t testing.TB, d *Drive, client *stubClient, directory domain.LibraryDirectory) {
 	t.Helper()
 	previous := client.list
@@ -274,11 +274,11 @@ func expireTokens(d *Drive) {
 	d.tokens.ExpiresAt = time.Now()
 }
 
-func savedDirectory(t testing.TB, d *Drive) (mountRecord, bool) {
+func savedRoots(t testing.TB, d *Drive) ([]mountRecord, bool) {
 	t.Helper()
-	record, found, err := database.LoadSetting[mountRecord](t.Context(), d.database, directorySetting)
+	records, found, err := database.LoadSetting[[]mountRecord](t.Context(), d.database, directoriesSetting)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return record, found
+	return records, found
 }

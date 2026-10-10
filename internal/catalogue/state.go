@@ -26,12 +26,21 @@ func (service *Service) MovieStates(ctx context.Context, identities []MovieIdent
 		ids[index], codes[index] = item.ID, codeid.Normalize(item.Code)
 		result[index] = MovieStateItem{ID: item.ID, State: MovieNotInLibrary}
 	}
-	var source *domain.LibrarySource
+	var sources []domain.LibrarySource
 	if service.local != nil {
-		source = service.local.Source()
+		sources = service.local.Sources()
 	}
-	if source == nil {
+	if len(sources) == 0 {
 		return result, nil
+	}
+	accountID := sources[0].AccountID
+	rootIDs := make([]string, 0, len(sources))
+	for _, source := range sources {
+		rootIDs = append(rootIDs, source.Directory.ID)
+	}
+	roots := make([]any, len(rootIDs))
+	for i, id := range rootIDs {
+		roots[i] = id
 	}
 	localMovies, err := service.local.MatchingMovies(ctx, ids, codes)
 	if err != nil {
@@ -69,8 +78,8 @@ func (service *Service) MovieStates(ctx context.Context, identities []MovieIdent
 		task.TypeIn(tasks.KindScan.String(), tasks.KindScrape.String()), task.StatusIn(task.StatusQueued, task.StatusRunning), func(s *sql.Selector) {
 			s.Where(sql.And(
 				sqljson.ValueIn(task.FieldPayload, taskIDs, sqljson.Path("javdb_id")),
-				sqljson.ValueEQ(task.FieldPayload, source.AccountID, sqljson.Path("source", "account_id")),
-				sqljson.ValueEQ(task.FieldPayload, source.Directory.ID, sqljson.Path("source", "directory", "id")),
+				sqljson.ValueEQ(task.FieldPayload, accountID, sqljson.Path("source", "account_id")),
+				sqljson.ValueIn(task.FieldPayload, roots, sqljson.Path("source", "directory", "id")),
 			))
 		}, func(s *sql.Selector) {
 			// Cover payloads can contain full NFO documents; only read task identity.
@@ -84,7 +93,7 @@ func (service *Service) MovieStates(ctx context.Context, identities []MovieIdent
 		processing[record.JavDBID] = true
 	}
 	downloads, err := service.database.OfflineDownload.Query().Where(
-		offlinedownload.AccountIDEQ(source.AccountID), offlinedownload.DirectoryIDEQ(source.Directory.ID),
+		offlinedownload.AccountIDEQ(accountID), offlinedownload.DirectoryIDIn(rootIDs...),
 		offlinedownload.JavdbIDIn(ids...),
 		offlinedownload.Or(offlinedownload.StatusEQ(offlinedownload.StatusRunning),
 			offlinedownload.And(offlinedownload.StatusEQ(offlinedownload.StatusDone), offlinedownload.ScanTaskIDEQ(0),

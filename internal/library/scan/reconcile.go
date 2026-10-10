@@ -55,7 +55,6 @@ func (r *scanRun) prepareReconcile(ctx context.Context, cfg export.Config) (map[
 		return nil, nil
 	}
 	indexed := file.And(database.LibraryFiles(r.payload.Source), file.ScanIDEQ(r.payload.ScanID))
-	retained := file.And(database.LibraryFiles(r.payload.Source), file.Not(r.staleFiles()))
 	reusable := make(map[int]time.Time)
 	for after := 0; ; {
 		if err := tasks.Checkpoint(ctx, r.scanner.db); err != nil {
@@ -63,7 +62,11 @@ func (r *scanRun) prepareReconcile(ctx context.Context, cfg export.Config) (map[
 		}
 		query := r.scanner.db.Movie.Query().Where(movie.IDGT(after), movie.ScrapeStatusEQ(movie.ScrapeStatusDone), movie.HasFilesWith(indexed)).
 			Order(movie.ByID()).Limit(reconcileBatchSize).
-			WithFiles(func(q *ent.FileQuery) { q.Where(retained) })
+			// Compare snapshots against every retained file of the account, so
+			// movies also indexed in sibling roots stay reusable across scans.
+			WithFiles(func(q *ent.FileQuery) {
+				q.Where(file.And(file.AccountIDEQ(r.payload.Source.AccountID), file.Not(r.staleFiles())))
+			})
 		records, err := query.All(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("load completed scan movies: %w", err)
@@ -75,7 +78,7 @@ func (r *scanRun) prepareReconcile(ctx context.Context, cfg export.Config) (map[
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if !scrape.SnapshotMatches(record, r.payload.Source) {
+			if !scrape.SnapshotMatches(record, r.payload.Source.AccountID) {
 				continue
 			}
 			cached, err := r.scanner.images.Exists(scrape.MovieArtwork(record))
@@ -107,7 +110,7 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 	if err != nil {
 		return fmt.Errorf("remove missing file indexes: %w", err)
 	}
-	removed, err := removeUnreferencedMovies(ctx, tx, movies)
+	removed, err := RemoveUnreferencedMovies(ctx, tx, movies)
 	if err != nil {
 		return err
 	}
@@ -178,8 +181,9 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 				// Publication checkpoints can precede the queue's final status update.
 				// Such a task can no longer pick up files found by this scan.
 				s.Where(sql.ExprP("coalesce(" + tasks.JSONExtract(s.C(task.FieldPayload), "completed") + ", 0) = 0"))
-				s.Where(sql.And(sqljson.ValueEQ(task.FieldPayload, r.payload.Source.AccountID, sqljson.Path("source", "account_id")),
-					sqljson.ValueEQ(task.FieldPayload, r.payload.Source.Directory.ID, sqljson.Path("source", "directory", "id"))))
+				// Scrape work is per movie, so any active task of the same account
+				// covers this scan's files regardless of which root queued it.
+				s.Where(sqljson.ValueEQ(task.FieldPayload, r.payload.Source.AccountID, sqljson.Path("source", "account_id")))
 				s.Select(s.C(task.FieldID), s.C(task.FieldResourceKey), sql.As(tasks.JSONExtract(s.C(task.FieldPayload), "scan_task_id"), "parent_id"))
 			}).Order(task.ByID()).Select(task.FieldID).Scan(ctx, &active); err != nil {
 			return err

@@ -15,6 +15,7 @@ const dummySource = {
   account_id: 'acc1',
   directory: { id: 'dir1', name: 'Movies', path: '/Movies' }
 }
+const dummyDirectories = [{ id: 'dir1' }]
 
 test('offline failures gain retry actions when their scan arrives later', () => {
   const task = offlineSubmission({
@@ -28,7 +29,7 @@ test('offline failures gain retry actions when their scan arrives later', () => 
   })
   const context: DiffContext = {
     tasks: [],
-    activity: { source: dummySource, tasks: [task] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [task] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,
@@ -70,7 +71,7 @@ for (const kind of ['scan', 'batch', 'offline']) {
     const id = kind === 'offline' ? 'offline:9' : `${kind}:${failed.id}`
     const context: DiffContext = {
       tasks: [failed],
-      activity: { source: dummySource, tasks: kind === 'offline' ? [offline] : [] },
+      activity: { source: dummySource, directories: dummyDirectories, tasks: kind === 'offline' ? [offline] : [] },
       waiting: false,
       isTasksError: false,
       isActivityError: false,
@@ -188,7 +189,7 @@ test('diffTaskNotifications announces new active tasks and tracks them', () => {
 
   const result = diffTaskNotifications({
     tasks: [scanTask, batchTask],
-    activity: { source: dummySource, tasks: [] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,
@@ -209,7 +210,7 @@ test('diffTaskNotifications avoids re-notifying when fingerprint is unchanged', 
   const scanTask = makeScanTask()
   const first = diffTaskNotifications({
     tasks: [scanTask],
-    activity: { source: dummySource, tasks: [] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,
@@ -222,7 +223,7 @@ test('diffTaskNotifications avoids re-notifying when fingerprint is unchanged', 
   // Second pass with same task and previous entries
   const second = diffTaskNotifications({
     tasks: [scanTask],
-    activity: { source: dummySource, tasks: [] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,
@@ -240,7 +241,7 @@ test('diffTaskNotifications notifies when task status changes to completed and c
   const activeTask = makeScanTask({ status: 'running' })
   const first = diffTaskNotifications({
     tasks: [activeTask],
-    activity: { source: dummySource, tasks: [] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,
@@ -254,7 +255,7 @@ test('diffTaskNotifications notifies when task status changes to completed and c
   const completedTask = makeScanTask({ status: 'done', progress: 100 })
   const second = diffTaskNotifications({
     tasks: [completedTask],
-    activity: { source: dummySource, tasks: [] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,
@@ -270,7 +271,7 @@ test('diffTaskNotifications notifies when task status changes to completed and c
   // Third pass: task is removed from tasks list
   const third = diffTaskNotifications({
     tasks: [],
-    activity: { source: dummySource, tasks: [] },
+    activity: { source: dummySource, directories: dummyDirectories, tasks: [] },
     waiting: false,
     isTasksError: false,
     isActivityError: false,

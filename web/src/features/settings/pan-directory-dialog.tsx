@@ -17,11 +17,11 @@ import { DirectoryList } from './directory-list'
 
 export function PanDirectoryDialog({
   accountID,
-  directory,
+  directories = [],
   children
 }: {
   accountID: string
-  directory?: PanDirectory
+  directories?: PanDirectory[]
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
@@ -31,16 +31,16 @@ export function PanDirectoryDialog({
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="max-h-[calc(100dvh-2rem)] grid-cols-1 overflow-x-hidden overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>选择媒体目录</DialogTitle>
+          <DialogTitle>添加媒体目录</DialogTitle>
           <DialogDescription>
-            进入目标文件夹后，点击“挂载当前目录”，系统会自动同步媒体库。
+            进入目标文件夹后，点击“挂载当前目录”，系统会自动同步该目录。可与已挂载目录并列，但不能互相嵌套。
           </DialogDescription>
         </DialogHeader>
         {/* Keep the picker mounted through DialogContent's exit animation. */}
         <DirectoryPicker
           accountID={accountID}
-          initialID={directory?.id ?? '0'}
-          mountedID={directory?.id}
+          initialID="0"
+          mountedIDs={directories.map(directory => directory.id)}
           onSelected={() => setOpen(false)}
         />
       </DialogContent>
@@ -51,18 +51,18 @@ export function PanDirectoryDialog({
 function DirectoryPicker({
   accountID,
   initialID,
-  mountedID,
+  mountedIDs,
   onSelected
 }: {
   accountID: string
   initialID: string
-  mountedID?: string
+  mountedIDs: string[]
   onSelected: () => void
 }) {
   const [location, setLocation] = useState({ id: initialID, page: 1 })
   const files = usePanFiles(accountID, location.id, location.page)
   const select = useSelectPanDirectory(accountID)
-  const mounted = location.id === mountedID
+  const mounted = mountedIDs.includes(location.id)
 
   function navigate(id: string, page = 1) {
     select.reset()

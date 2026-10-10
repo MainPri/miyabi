@@ -48,10 +48,12 @@ export function MovieMagnets({
   const unauthorized = isPanUnauthorized(account.error)
   const connected = account.data?.connected === true && !unauthorized
   const accountID = connected ? (account.data?.account?.id ?? '') : ''
-  const offline = useOfflineTasks(movieID, accountID, account.data?.directory?.id ?? '')
+  // Offline downloads always land in the first mounted directory.
+  const primaryDirectory = account.data?.directories?.[0]?.id ?? ''
+  const offline = useOfflineTasks(movieID, accountID, primaryDirectory)
   const tasks = new Map(offline.data?.map(task => [task.hash, task] as const))
   const checkingStatus = offline.isPending
-  const hasDirectory = Boolean(account.data?.directory)
+  const hasDirectory = Boolean(account.data?.directories?.length)
   const [copiedHash, setCopiedHash] = useState('')
   const [copyError, setCopyError] = useState(false)
 

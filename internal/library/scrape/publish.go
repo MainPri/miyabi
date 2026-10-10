@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	subtitlemeta "github.com/ppxb/miyabi/internal/domain/subtitle"
 	"github.com/ppxb/miyabi/internal/drive"
@@ -83,7 +82,7 @@ func (service *Service) publishMovie(ctx context.Context, sess drive.Session, jo
 			}
 			// A scan may have reconciled the index while artwork was downloading.
 			// Check again under the source/export locks before creating any sidecars.
-			files, err := service.db.File.Query().Where(database.LibraryFiles(input.Source), file.MovieIDEQ(input.MovieID)).All(ctx)
+			files, err := service.db.File.Query().Where(service.accountFiles(input.Source.AccountID), file.MovieIDEQ(input.MovieID)).All(ctx)
 			if err != nil {
 				return err
 			}
@@ -169,7 +168,7 @@ func (service *Service) verifyVideoPositions(ctx context.Context, sess drive.Ses
 		if err != nil {
 			return fmt.Errorf("确认视频文件位置: %w", err)
 		}
-		if info.ParentID != directory.ID || !drive.WithinSource(info, sess.Source()) {
+		if info.ParentID != directory.ID || !sess.Contains(info) {
 			return domain.E(domain.KindConflict, "视频已移动，请重新扫描", nil)
 		}
 	}

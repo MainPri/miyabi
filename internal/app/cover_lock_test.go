@@ -40,7 +40,7 @@ func TestCoverCleanupOnlyBlocksUntilArtworkCheckpoint(t *testing.T) {
 	ctx := t.Context()
 	fixture.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
 	fixture.addCatalogueMovie(fixtureDetail())
-	if _, err := fixture.library.StartScan(ctx); err != nil {
+	if _, err := fixture.library.StartScan(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	{

@@ -2,13 +2,16 @@ package drive
 
 import (
 	"context"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
+	"github.com/ppxb/miyabi/internal/ent/setting"
 	"github.com/ppxb/miyabi/internal/pan"
 	"github.com/ppxb/miyabi/internal/syncx"
 	"golang.org/x/sync/singleflight"
@@ -16,7 +19,9 @@ import (
 
 const (
 	credentialsSetting = "pan.credentials"
-	directorySetting   = "pan.library_directory"
+	directoriesSetting = "pan.library_directories"
+	// legacyDirectorySetting holds the pre-multimount single directory record.
+	legacyDirectorySetting = "pan.library_directory"
 )
 
 // Client abstracts the upstream 115 API calls.
@@ -49,22 +54,55 @@ func (r mountRecord) source() domain.LibrarySource {
 
 type snapshot struct {
 	tokens               pan.Tokens
-	directory            mountRecord
+	roots                []mountRecord
+	epochs               map[string]uint64
 	authorizationVersion uint64
 	credentialVersion    uint64
 	tokenVersion         uint64
 	closed               bool
 }
 
-func (s snapshot) source() domain.LibrarySource {
-	return s.directory.source()
+// root returns the mounted record of a directory ID.
+func (s snapshot) root(directoryID string) (mountRecord, bool) {
+	for _, record := range s.roots {
+		if record.ID == directoryID {
+			return record, true
+		}
+	}
+	return mountRecord{}, false
 }
 
-func (s snapshot) matchesSource(source domain.LibrarySource, version uint64) bool {
-	return s.authorizationVersion == version && s.directory.AccountID == source.AccountID && s.directory.ID == source.Directory.ID
+// matchesSource reports whether a session pinned to the given source and root
+// epoch is still valid. Each root carries its own epoch so mounting or removing
+// another root does not invalidate this one.
+func (s snapshot) matchesSource(source domain.LibrarySource, epoch uint64) bool {
+	record, ok := s.root(source.Directory.ID)
+	return ok && s.epochs[source.Directory.ID] == epoch && record.AccountID == source.AccountID
 }
 
-// Drive coordinates 115 credentials, mount point, and authorization lifecycle.
+// primary returns the first root mounted for the account; new offline
+// downloads and unpinned sessions target it.
+func (s snapshot) primary(accountID string) (mountRecord, bool) {
+	for _, record := range s.roots {
+		if record.AccountID == accountID {
+			return record, true
+		}
+	}
+	return mountRecord{}, false
+}
+
+// sources returns every mounted source, optionally narrowed to one account.
+func (s snapshot) sources(accountID string) []domain.LibrarySource {
+	result := make([]domain.LibrarySource, 0, len(s.roots))
+	for _, record := range s.roots {
+		if accountID == "" || record.AccountID == accountID {
+			result = append(result, record.source())
+		}
+	}
+	return result
+}
+
+// Drive coordinates 115 credentials, mounted directories, and authorization lifecycle.
 type Drive struct {
 	database *ent.Client
 	client   Client
@@ -72,7 +110,8 @@ type Drive struct {
 	mu                   sync.Mutex
 	commit               syncx.ContextLock
 	tokens               pan.Tokens
-	directory            mountRecord
+	roots                []mountRecord
+	epochs               map[string]uint64
 	authorizationVersion uint64
 	credentialVersion    uint64
 	tokenVersion         uint64
@@ -99,18 +138,49 @@ func NewWithClient(ctx context.Context, db *ent.Client, client Client) (*Drive, 
 	if err != nil {
 		return nil, err
 	}
-	directory, _, err := database.LoadSetting[mountRecord](ctx, db, directorySetting)
+	roots, err := loadRoots(ctx, db)
 	if err != nil {
 		return nil, err
 	}
 	d := &Drive{
-		database:  db,
-		client:    client,
-		tokens:    tokens,
-		directory: directory,
+		database: db,
+		client:   client,
+		tokens:   tokens,
+		roots:    roots,
+		epochs:   make(map[string]uint64, len(roots)),
+	}
+	for _, record := range roots {
+		d.epochs[record.ID] = 1
 	}
 	d.login.drive = d
 	return d, nil
+}
+
+// loadRoots reads the mounted directories, migrating the legacy single
+// directory setting on first startup after an upgrade.
+func loadRoots(ctx context.Context, db *ent.Client) ([]mountRecord, error) {
+	roots, found, err := database.LoadSetting[[]mountRecord](ctx, db, directoriesSetting)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return roots, nil
+	}
+	legacy, found, err := database.LoadSetting[mountRecord](ctx, db, legacyDirectorySetting)
+	if err != nil {
+		return nil, err
+	}
+	if !found || legacy.ID == "" {
+		return nil, nil
+	}
+	roots = []mountRecord{legacy}
+	if err := database.SaveSetting(ctx, db, directoriesSetting, roots); err != nil {
+		return nil, err
+	}
+	if _, err := db.Setting.Delete().Where(setting.Key(legacyDirectorySetting)).Exec(ctx); err != nil {
+		return nil, err
+	}
+	return roots, nil
 }
 
 func (d *Drive) Close() {
@@ -126,7 +196,8 @@ func (d *Drive) snapshot() snapshot {
 	defer d.mu.Unlock()
 	return snapshot{
 		tokens:               d.tokens,
-		directory:            d.directory,
+		roots:                slices.Clone(d.roots),
+		epochs:               maps.Clone(d.epochs),
 		authorizationVersion: d.authorizationVersion,
 		credentialVersion:    d.credentialVersion,
 		tokenVersion:         d.tokenVersion,
@@ -142,27 +213,26 @@ func (d *Drive) credentials(expected snapshot) (snapshot, error) {
 	return current, nil
 }
 
-func (d *Drive) sourceState(source domain.LibrarySource, version uint64) (snapshot, error) {
+func (d *Drive) sourceState(source domain.LibrarySource, epoch, credentialVersion uint64) (snapshot, error) {
 	state := d.snapshot()
-	if !state.matchesSource(source, version) {
+	if state.credentialVersion != credentialVersion || !state.matchesSource(source, epoch) {
 		return snapshot{}, ErrSourceChanged
 	}
 	return state, nil
 }
 
-func (d *Drive) verifiedSource(ctx context.Context) (snapshot, error) {
+// verifiedSource checks the account and returns its primary mounted root.
+func (d *Drive) verifiedSource(ctx context.Context) (snapshot, mountRecord, error) {
 	state := d.snapshot()
 	account, err := d.verifyAccount(ctx, state)
 	if err != nil {
-		return snapshot{}, err
+		return snapshot{}, mountRecord{}, err
 	}
-	if _, err := d.sourceState(state.source(), state.authorizationVersion); err != nil {
-		return snapshot{}, err
+	record, ok := state.primary(account.ID)
+	if !ok {
+		return snapshot{}, mountRecord{}, ErrMediaDirectoryRequired
 	}
-	if state.directory.ID == "" || state.directory.AccountID != account.ID {
-		return snapshot{}, ErrMediaDirectoryRequired
-	}
-	return state, nil
+	return state, record, nil
 }
 
 // StartWork registers work that Close must wait for, such as a remote
@@ -192,12 +262,7 @@ func (d *Drive) OpenMedia(ctx context.Context, method, address string, headers h
 	return d.client.OpenMedia(ctx, method, address, headers)
 }
 
-// Source returns the current mounted library source from the in-memory snapshot, or nil if unmounted.
-func (d *Drive) Source() *domain.LibrarySource {
-	s := d.snapshot()
-	if s.directory.ID == "" || s.directory.AccountID == "" {
-		return nil
-	}
-	src := s.source()
-	return &src
+// Sources returns every currently mounted library source.
+func (d *Drive) Sources() []domain.LibrarySource {
+	return d.snapshot().sources("")
 }
