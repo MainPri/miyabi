@@ -323,8 +323,13 @@ function useNextFixture() {
 }
 
 for (const scan of [
-  { name: 'scan', useOperation: useStartLibraryScan, input: false },
-  { name: 'rescrape', useOperation: useRescrapeFixture, input: 'ABP-001' }
+  {
+    name: 'scan',
+    useOperation: useStartLibraryScan,
+    input: { rebuild: false },
+    response: [queuedScan]
+  },
+  { name: 'rescrape', useOperation: useRescrapeFixture, input: 'ABP-001', response: queuedScan }
 ]) {
   test(`${scan.name}: an SSE snapshot arriving first survives an older mutation response`, async () => {
     const f = fixture()
@@ -332,7 +337,7 @@ for (const scan of [
     const mutation = operation(f.client, scan.useOperation).execute(scan.input)
     await vi.advanceTimersByTimeAsync(0)
     await f.events.send('tasks', [finishedScan])
-    result.resolve(Response.json(queuedScan))
+    result.resolve(Response.json(scan.response))
     await vi.advanceTimersByTimeAsync(0)
     expect(f.client.getQueryData(taskKeys.all)).toEqual([finishedScan])
     expect(reads).toHaveLength(1)
@@ -345,7 +350,7 @@ for (const scan of [
     const { result, reads } = deferredResponses(f, '/api/tasks')
     const mutation = operation(f.client, scan.useOperation).execute(scan.input)
     await vi.advanceTimersByTimeAsync(0)
-    result.resolve(Response.json(queuedScan))
+    result.resolve(Response.json(scan.response))
     await vi.advanceTimersByTimeAsync(0)
     expect(f.client.getQueryData<Task[]>(taskKeys.all)?.[0]).toEqual(queuedScan)
     expect(reads).toHaveLength(1)
@@ -369,7 +374,7 @@ for (const scan of [
       account: { id: 'acc2' },
       directories: [{ id: 'dir2' }]
     })
-    result.resolve(Response.json(queuedScan))
+    result.resolve(Response.json(scan.response))
     await vi.advanceTimersByTimeAsync(0)
     expect(f.client.getQueryData(taskKeys.all)).toEqual([])
     reads[0]!.resolve(Response.json([]))

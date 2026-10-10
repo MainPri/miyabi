@@ -151,12 +151,28 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 			return err
 		}
 	}
+	// Rebuilds of sibling roots cover shared movies; a movie whose metadata was
+	// refreshed by any rebuild scrape after this scan was queued needs no work.
+	// The task creation time bounds the work to this rebuild's lifetime.
+	var rebuildCutoff time.Time
+	if r.payload.Rebuild && r.taskID > 0 {
+		record, err := tx.Task.Query().Where(task.IDEQ(r.taskID)).Select(task.FieldCreatedAt).Only(ctx)
+		if err != nil {
+			return fmt.Errorf("load rebuild scan task: %w", err)
+		}
+		rebuildCutoff = record.CreatedAt
+	}
 	queued := false
 	r.payload.ReusedTasks = nil
 	for after := 0; ; {
-		records, err := tx.Movie.Query().Where(movie.IDGT(after), movie.HasFilesWith(indexed)).
+		query := tx.Movie.Query().Where(movie.IDGT(after), movie.HasFilesWith(indexed)).
 			Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID, movie.FieldManualCode, movie.FieldUpdatedAt).
-			Order(movie.ByID()).Limit(reconcileBatchSize).All(ctx)
+			Order(movie.ByID()).Limit(reconcileBatchSize)
+		if !rebuildCutoff.IsZero() {
+			query.Select(movie.FieldMetadataSnapshot).
+				WithFiles(func(q *ent.FileQuery) { q.Where(file.AccountIDEQ(r.payload.Source.AccountID)) })
+		}
+		records, err := query.All(ctx)
 		if err != nil {
 			return fmt.Errorf("find scanned metadata jobs: %w", err)
 		}
@@ -167,6 +183,21 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 		keys := make([]string, len(records))
 		for i, record := range records {
 			keys[i] = fmt.Sprintf("movie:%d", record.ID)
+		}
+		rebuilt := make(map[string]bool)
+		if !rebuildCutoff.IsZero() {
+			doneKeys, err := tx.Task.Query().Where(task.TypeEQ(string(tasks.KindScrape)), task.ResourceKeyIn(keys...),
+				task.StatusEQ(task.StatusDone), task.CreatedAtGT(rebuildCutoff), func(s *sql.Selector) {
+					s.Where(sql.ExprP(tasks.JSONExtract(s.C(task.FieldPayload), "rebuild") + " = 1"))
+					s.Where(sql.ExprP(tasks.JSONExtract(s.C(task.FieldPayload), "completed") + " = 1"))
+					s.Where(sqljson.ValueEQ(task.FieldPayload, r.payload.Source.AccountID, sqljson.Path("source", "account_id")))
+				}).Select(task.FieldResourceKey).Strings(ctx)
+			if err != nil {
+				return err
+			}
+			for _, key := range doneKeys {
+				rebuilt[key] = true
+			}
 		}
 		var active []struct {
 			ID          int    `json:"id"`
@@ -200,6 +231,9 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 				if item.ParentID != r.taskID {
 					r.payload.ReusedTasks = append(r.payload.ReusedTasks, item.ID)
 				}
+				continue
+			}
+			if rebuilt[fmt.Sprintf("movie:%d", record.ID)] && scrape.SnapshotMatches(record, r.payload.Source.AccountID) {
 				continue
 			}
 			if checked, ok := reusable[record.ID]; ok && checked.Equal(record.UpdatedAt) {

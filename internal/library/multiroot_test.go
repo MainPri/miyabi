@@ -2,13 +2,19 @@ package library
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent/movie"
+	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/export"
+	mediaimage "github.com/ppxb/miyabi/internal/image"
 	"github.com/ppxb/miyabi/internal/library/scan"
+	"github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/pan"
+	"github.com/ppxb/miyabi/internal/tasks"
 )
 
 // TestReconcileOfOneRootKeepsSiblingRootsAndSharedMovies pins the cleanup
@@ -109,5 +115,99 @@ func TestPruneSourceRemovesUnmountedIndexButKeepsSharedMovies(t *testing.T) {
 	prune()
 	if lib.database.File.Query().CountX(ctx) != 1 {
 		t.Fatal("repeated prune changed the index")
+	}
+}
+
+func TestRebuildReconcileSkipsMoviesRefreshedBySiblingRebuild(t *testing.T) {
+	for _, scenario := range []struct {
+		name         string
+		stale        bool
+		otherAccount bool
+		wantTasks    int
+	}{
+		{name: "fresh sibling rebuild", wantTasks: 1},
+		{name: "files changed after scrape", stale: true, wantTasks: 2},
+		{name: "other account rebuilt", otherAccount: true, wantTasks: 2},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			lib, _, payload := libraryFixture(t)
+			ctx := t.Context()
+			client := stubOf(t, lib.drive)
+			previous := client.list
+			client.list = func(requestCtx context.Context, token, id string, offset, limit int) (pan.FilePage, error) {
+				if id == "20" {
+					return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: "20", Name: "Other"}}}, nil
+				}
+				if previous != nil {
+					return previous(requestCtx, token, id, offset, limit)
+				}
+				return pan.FilePage{}, nil
+			}
+			defer func() { client.list = previous }()
+			if _, err := lib.drive.SelectDirectory(ctx, "20"); err != nil {
+				t.Fatal(err)
+			}
+			sources := lib.drive.Sources()
+
+			shared := lib.database.Movie.Create().SetCode("ABP-001").SaveX(ctx)
+			onlyB := lib.database.Movie.Create().SetCode("IPX-001").SaveX(ctx)
+			lib.database.File.Create().SetFileID("a-shared").SetName("ABP-001.mp4").SetSize(1024).
+				SetAccountID(payload.Source.AccountID).SetRootID(payload.Source.Directory.ID).
+				SetScanID("s-b").SetMovieID(shared.ID).ExecX(ctx)
+			lib.database.File.Create().SetFileID("b-shared").SetName("ABP-001.mp4").SetSize(1024).
+				SetAccountID(payload.Source.AccountID).SetRootID("20").SetScanID("s-b").SetMovieID(shared.ID).ExecX(ctx)
+			lib.database.File.Create().SetFileID("b-only").SetName("IPX-001.mp4").SetSize(1024).
+				SetAccountID(payload.Source.AccountID).SetRootID("20").SetScanID("s-b").SetMovieID(onlyB.ID).ExecX(ctx)
+			shared.Update().SetScrapeStatus(movie.ScrapeStatusDone).SetMetadataSnapshot(&domain.MetadataSnapshot{
+				AccountID: payload.Source.AccountID, DirectoryID: payload.Source.Directory.ID,
+				PosterVersion: mediaimage.PosterVersion,
+				Videos: scrape.VideoFingerprint([]pan.File{
+					{ID: "a-shared", Name: "ABP-001.mp4", Size: 1024},
+					{ID: "b-shared", Name: "ABP-001.mp4", Size: 1024},
+				}),
+			}).ExecX(ctx)
+			if scenario.stale {
+				lib.database.File.Create().SetFileID("b-new").SetName("ABP-001-part2.mp4").SetSize(1024).
+					SetAccountID(payload.Source.AccountID).SetRootID("20").SetScanID("s-b").SetMovieID(shared.ID).ExecX(ctx)
+			}
+
+			// The sibling root's rebuild scan was queued first and already refreshed the
+			// shared movie through a completed rebuild scrape child.
+			cutoff := time.Now().Add(-time.Minute)
+			rebuild := domain.ScanPayload{Source: sources[1], Rebuild: true, Scan: domain.ScanProgress{Stage: "reconciling"}}
+			scanB := lib.database.Task.Create().SetType("scan").SetCreatedAt(cutoff).SaveX(ctx)
+			scrapeSource := sources[0]
+			if scenario.otherAccount {
+				scrapeSource.AccountID = "another-account"
+			}
+			rebuildBody, err := tasks.EncodePayload(scrape.Payload{MetadataPayload: scrape.MetadataPayload{
+				Rebuild: true, Source: scrapeSource, ScanTaskID: scanB.ID, MovieID: shared.ID, Code: shared.Code,
+			}, Completed: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			lib.database.Task.Create().SetType("scrape").SetStatus(task.StatusDone).
+				SetResourceKey(fmt.Sprintf("movie:%d", shared.ID)).SetPayload(rebuildBody).
+				SetCreatedAt(cutoff.Add(time.Second)).SaveX(ctx)
+			if err := reconcileScan(ctx, lib, scanB.ID, "s-b", &rebuild); err != nil {
+				t.Fatal(err)
+			}
+
+			queued := lib.database.Task.Query().Where(task.TypeEQ("scrape"), task.StatusEQ(task.StatusQueued)).AllX(ctx)
+			if len(queued) != scenario.wantTasks {
+				t.Fatalf("rebuild queued %d scrape tasks, want %d: %+v", len(queued), scenario.wantTasks, queued)
+			}
+			seen := make(map[int]bool)
+			for _, job := range queued {
+				input, err := tasks.DecodePayload[scrape.MetadataPayload](job.Payload)
+				if err != nil || seen[input.MovieID] {
+					t.Fatalf("invalid or duplicate scrape target: %+v %v", input, err)
+				}
+				seen[input.MovieID] = true
+			}
+			if !seen[onlyB.ID] || seen[shared.ID] != (scenario.wantTasks == 2) {
+				t.Fatalf("wrong rebuild targets: %v", seen)
+			}
+		})
 	}
 }

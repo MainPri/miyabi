@@ -52,8 +52,12 @@ func (d *Drive) SelectDirectory(ctx context.Context, directoryID string) (domain
 			ID: directoryID, Name: files.Path[len(files.Path)-1].Name,
 			Path: directoryPath(files.Path),
 		}
-		record := mountRecord{AccountID: account.ID, LibraryDirectory: directory}
-		if err := d.checkRootOverlap(ctx, state, account.ID, record, files.Path); err != nil {
+		chain := make([]string, 0, len(files.Path))
+		for _, segment := range files.Path {
+			chain = append(chain, segment.ID)
+		}
+		record := mountRecord{AccountID: account.ID, Ancestors: chain, LibraryDirectory: directory}
+		if err := d.checkRootOverlap(ctx, state, account.ID, record); err != nil {
 			return domain.LibraryDirectory{}, err
 		}
 
@@ -91,26 +95,33 @@ func (d *Drive) SelectDirectory(ctx context.Context, directoryID string) (domain
 }
 
 // checkRootOverlap rejects nesting a new root inside an existing one or the
-// other way around, using each root's 115 ancestry chain.
-func (d *Drive) checkRootOverlap(ctx context.Context, state snapshot, accountID string, record mountRecord, chain []pan.Directory) error {
-	for _, existing := range state.sources(accountID) {
-		if existing.Directory.ID == record.ID {
+// other way around. Cached ancestry chains answer in memory without upstream
+// calls; records migrated from the legacy single-directory setting carry no
+// chain until remounted and fall back to one remote listing.
+func (d *Drive) checkRootOverlap(ctx context.Context, state snapshot, accountID string, record mountRecord) error {
+	for _, existing := range state.roots {
+		if existing.AccountID != accountID || existing.ID == record.ID {
 			continue // Re-selecting the same directory stays idempotent.
 		}
-		if existing.Directory.ID == "0" || record.ID == "0" {
+		if existing.ID == "0" || record.ID == "0" {
 			return domain.E(domain.KindConflict, "媒体目录不能与其他挂载目录重叠", nil)
 		}
-		if slices.ContainsFunc(chain, func(dir pan.Directory) bool { return dir.ID == existing.Directory.ID }) {
-			return domain.E(domain.KindConflict, fmt.Sprintf("该目录位于已挂载的 %s 之内，请直接挂载其上层目录", existing.Directory.Path), nil)
+		if slices.Contains(record.Ancestors, existing.ID) {
+			return domain.E(domain.KindConflict, fmt.Sprintf("该目录位于已挂载的 %s 之内，请直接挂载其上层目录", existing.Path), nil)
 		}
-		files, err := withPanToken(ctx, d, state, func(current snapshot) (pan.FilePage, error) {
-			return d.client.List(ctx, current.tokens.AccessToken, existing.Directory.ID, 0, 1)
-		})
-		if err != nil {
-			return fmt.Errorf("check mounted directory %s: %w", existing.Directory.Path, err)
+		if slices.Contains(existing.Ancestors, record.ID) {
+			return domain.E(domain.KindConflict, fmt.Sprintf("该目录已包含已挂载的 %s，请改为挂载其子目录", existing.Path), nil)
 		}
-		if slices.ContainsFunc(files.Path, func(dir pan.Directory) bool { return dir.ID == record.ID }) {
-			return domain.E(domain.KindConflict, fmt.Sprintf("该目录已包含已挂载的 %s，请改为挂载其子目录", existing.Directory.Path), nil)
+		if len(existing.Ancestors) == 0 {
+			files, err := withPanToken(ctx, d, state, func(current snapshot) (pan.FilePage, error) {
+				return d.client.List(ctx, current.tokens.AccessToken, existing.ID, 0, 1)
+			})
+			if err != nil {
+				return fmt.Errorf("check mounted directory %s: %w", existing.Path, err)
+			}
+			if slices.ContainsFunc(files.Path, func(dir pan.Directory) bool { return dir.ID == record.ID }) {
+				return domain.E(domain.KindConflict, fmt.Sprintf("该目录已包含已挂载的 %s，请改为挂载其子目录", existing.Path), nil)
+			}
 		}
 	}
 	return nil
@@ -224,6 +235,12 @@ func (d *Drive) discardOtherAccountRoots(ctx context.Context, accountID string) 
 	return nil
 }
 
+// sameMount reports whether a mount record is unchanged; slices make the
+// structs non-comparable directly.
+func sameMount(a, b mountRecord) bool {
+	return a.AccountID == b.AccountID && a.LibraryDirectory == b.LibraryDirectory && slices.Equal(a.Ancestors, b.Ancestors)
+}
+
 // swapRoots publishes a new mount set in memory and returns what it replaced.
 // Epochs advance only for roots whose record changed; siblings of a mount
 // change keep their epochs so their sessions survive. Epochs of removed roots
@@ -244,7 +261,7 @@ func (d *Drive) swapRoots(roots []mountRecord) snapshot {
 	for _, record := range roots {
 		next[record.ID] = previous.epochs[record.ID] + 1
 		for _, old := range previous.roots {
-			if old.ID == record.ID && old == record {
+			if sameMount(old, record) {
 				next[record.ID] = previous.epochs[record.ID]
 				break
 			}

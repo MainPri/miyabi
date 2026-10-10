@@ -19,6 +19,7 @@ export function PanDirectoryRow({
 }) {
   const remove = useRemovePanDirectory(accountID)
   const startScan = useStartLibraryScan()
+  const scanning = startScan.isPending && startScan.variables?.directoryID === directory.id
   const notifyScan = useNotifyScanTask()
 
   return (
@@ -34,7 +35,7 @@ export function PanDirectoryRow({
               type="button"
               variant="outline"
               size="icon"
-              disabled={disabled || startScan.isPending}
+              disabled={disabled || scanning}
               onClick={() =>
                 startScan.mutate(
                   { rebuild: false, directoryID: directory.id },
@@ -54,7 +55,7 @@ export function PanDirectoryRow({
                 )
               }
             >
-              {startScan.isPending ? (
+              {scanning ? (
                 <LoaderCircleIcon className="size-4 animate-spin" />
               ) : (
                 <RefreshCwIcon className="size-4" />

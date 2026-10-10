@@ -101,8 +101,8 @@ function submission(action: 'rescrape' | 'scan' | 'rebuild') {
   const event = action === 'rescrape' ? 'onSelect' : 'onClick'
   const controls = elements(tree).filter(element => typeof element.props[event] === 'function')
   ;(controls[action === 'rebuild' ? 1 : 0]!.props[event] as () => void)()
-  const callbacks = mutate.mock.calls[0]![1] as { onSuccess: (task: ScanTask) => void }
-  return { client, complete: () => callbacks.onSuccess(queued) }
+  const callbacks = mutate.mock.calls[0]![1] as { onSuccess: (task: ScanTask | ScanTask[]) => void }
+  return { client, complete: () => callbacks.onSuccess(action === 'rescrape' ? queued : [queued]) }
 }
 
 for (const action of ['rescrape', 'scan', 'rebuild'] as const) {

@@ -45,6 +45,10 @@ type Client interface {
 
 type mountRecord struct {
 	AccountID string `json:"account_id"`
+	// Ancestors caches the 115 directory IDs from the root to this mount,
+	// answering overlap checks in memory; records migrated from the legacy
+	// single-directory setting carry none until remounted.
+	Ancestors []string `json:"ancestors,omitempty"`
 	domain.LibraryDirectory
 }
 

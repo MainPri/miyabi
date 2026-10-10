@@ -163,6 +163,76 @@ func TestSelectDirectoryRejectsOverlappingRoots(t *testing.T) {
 	}
 }
 
+func TestMountCachesAncestryAndListsOnlyTheNewDirectory(t *testing.T) {
+	d, client := mountFixture(t)
+	ctx := t.Context()
+	calls := make(map[string]int)
+	client.list = func(_ context.Context, _, id string, _, _ int) (pan.FilePage, error) {
+		calls[id]++
+		return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: id, Name: "Movies" + id}}}, nil
+	}
+	for _, id := range []string{"10", "20", "30"} {
+		if _, err := d.SelectDirectory(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(calls) != 3 || calls["10"] != 1 || calls["20"] != 1 || calls["30"] != 1 {
+		t.Fatalf("cached mounts triggered extra 115 listings: %v", calls)
+	}
+	saved, found := savedRoots(t, d)
+	if !found || len(saved) != 3 {
+		t.Fatalf("mount records not saved: %+v", saved)
+	}
+	for _, entry := range saved {
+		if !slices.Equal(entry.Ancestors, []string{"0", entry.ID}) {
+			t.Fatalf("mount %s lost its ancestry: %v", entry.ID, entry.Ancestors)
+		}
+	}
+	restarted, err := NewWithClient(ctx, d.database, d.client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if _, err := restarted.SelectDirectory(ctx, "40"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 4 || calls["40"] != 1 {
+		t.Fatalf("restart re-listed cached roots: %v", calls)
+	}
+}
+
+func TestMountLegacyRecordFallsBackToListingForOverlap(t *testing.T) {
+	d, client := mountFixture(t)
+	ctx := t.Context()
+	selectTestDirectory(t, d, client, domain.LibraryDirectory{ID: "10", Name: "Movies10", Path: "/Movies10"})
+	legacy := slices.Clone(d.snapshot().roots)
+	legacy[0].Ancestors = nil
+	if err := d.persistRoots(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	d.swapRoots(legacy)
+	calls := make(map[string]int)
+	client.list = func(_ context.Context, _, id string, _, _ int) (pan.FilePage, error) {
+		calls[id]++
+		if id == "10" {
+			return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: "parent", Name: "Parent"}, {ID: "10", Name: "Movies10"}}}, nil
+		}
+		return pan.FilePage{Path: []pan.Directory{{ID: "0"}, {ID: id, Name: id}}}, nil
+	}
+	if _, err := d.SelectDirectory(ctx, "parent"); !domain.IsKind(err, domain.KindConflict) {
+		t.Fatalf("legacy root allowed an overlapping ancestor: %v", err)
+	}
+	if calls["parent"] != 1 || calls["10"] != 1 || len(d.Sources()) != 1 {
+		t.Fatalf("legacy fallback calls=%v mounts=%+v", calls, d.Sources())
+	}
+	if _, err := d.SelectDirectory(ctx, "20"); err != nil {
+		t.Fatal(err)
+	}
+	if calls["20"] != 1 || calls["10"] != 2 {
+		t.Fatalf("legacy root did not fall back for non-overlap: %v", calls)
+	}
+}
+
 func TestRemovingARootKeepsSiblingSessionsValid(t *testing.T) {
 	d, client := mountFixture(t)
 	ctx := t.Context()
@@ -212,7 +282,7 @@ func TestMountRollsBackWhenAListenerRejectsIt(t *testing.T) {
 	after := d.snapshot()
 	saved, found := savedRoots(t, d)
 	if mounts.count() != 1 || len(after.roots) != len(before.roots) || after.authorizationVersion != before.authorizationVersion ||
-		!found || len(saved) != 1 || saved[0] != before.roots[0] {
+		!found || len(saved) != 1 || !sameMount(saved[0], before.roots[0]) {
 		t.Fatalf("failed mount left partial state: memory=%+v saved=%+v found=%t", after.roots, saved, found)
 	}
 	mounts.reject(nil)

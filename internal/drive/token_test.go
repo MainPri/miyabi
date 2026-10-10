@@ -328,7 +328,8 @@ func TestRejectedRefreshClearsOnlyCredentialsAndAllowsRelogin(t *testing.T) {
 	if status, err := d.Account(ctx); err != nil || status.Connected {
 		t.Fatalf("account after rejection=%+v err=%v", status, err)
 	}
-	if roots, found := savedRoots(t, d); !found || len(roots) != 1 || roots[0] != state.roots[0] || d.snapshot().roots[0] != state.roots[0] {
+	if roots, found := savedRoots(t, d); !found || len(roots) != 1 || !sameMount(roots[0], state.roots[0]) ||
+		!sameMount(d.snapshot().roots[0], state.roots[0]) {
 		t.Fatal("credential rejection removed the mounted directory")
 	}
 	restarted, err := NewWithClient(ctx, d.database, client)
