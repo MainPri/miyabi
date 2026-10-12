@@ -268,7 +268,9 @@ func libraryScope(sources []domain.LibrarySource) predicate.File {
 	return file.Or(scopes...)
 }
 
-func (s *Service) Movies(ctx context.Context, page, limit int) (Page, error) {
+// Movies lists one page of library movies, optionally restricted to movies of
+// one actor (actorID > 0). The scope matches Actors and the movie detail view.
+func (s *Service) Movies(ctx context.Context, page, limit, actorID int) (Page, error) {
 	var directories []domain.LibraryDirectory
 	sources := s.Sources()
 	if len(sources) > 0 {
@@ -279,17 +281,23 @@ func (s *Service) Movies(ctx context.Context, page, limit int) (Page, error) {
 	}
 	result := Page{Movies: []Movie{}, Page: page, Directories: directories}
 	scope := libraryScope(sources)
+	query := s.database.Movie.Query().Where(movie.HasFilesWith(scope))
 	var err error
-	result.Total, err = s.database.File.Query().Where(scope).Aggregate(func(selector *sql.Selector) string {
-		return sql.As("COUNT(DISTINCT "+selector.C(file.FieldMovieID)+")", "total")
-	}).Int(ctx)
+	if actorID > 0 {
+		query = query.Where(movie.HasActorsWith(actor.IDEQ(actorID)))
+		result.Total, err = query.Clone().Count(ctx)
+	} else {
+		result.Total, err = s.database.File.Query().Where(scope).Aggregate(func(selector *sql.Selector) string {
+			return sql.As("COUNT(DISTINCT "+selector.C(file.FieldMovieID)+")", "total")
+		}).Int(ctx)
+	}
 	if err != nil {
 		return result, fmt.Errorf("count library index: %w", err)
 	}
 	if result.Total == 0 {
 		return result, nil
 	}
-	records, err := s.database.Movie.Query().Where(movie.HasFilesWith(scope)).
+	records, err := query.
 		Select(movie.FieldID, movie.FieldCode, movie.FieldTitle, movie.FieldJavdbID, movie.FieldCover, movie.FieldPoster,
 			movie.FieldFanarts, movie.FieldReleaseDate, movie.FieldDuration, movie.FieldRating,
 			movie.FieldDirectorID, movie.FieldDirectorName, movie.FieldMakerID, movie.FieldMakerName,

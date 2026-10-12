@@ -155,7 +155,7 @@ func TestFANZACompactSearchAndAmateurImageFallback(t *testing.T) {
 		}
 	})
 	m, err := s.Fetch(t.Context(), domain.MovieRef{Code: "FUYU-079"})
-	if err != nil || !reflect.DeepEqual(keywords, []string{"fuyu00079", "fuyu079"}) || len(m.Images) != 1 || m.Images[0].URL != "small.jpg" || len(m.Detail.Actors) != 1 {
+	if err != nil || !reflect.DeepEqual(keywords, []string{"fuyu00079", "fuyu079"}) || len(m.Images) != 1 || m.Images[0].URL != "small.jpg" || len(m.Detail.Actors) != 1 || m.Detail.Actors[0].Gender != "female" {
 		t.Fatalf("result=%+v err=%v keywords=%v", m, err, keywords)
 	}
 }

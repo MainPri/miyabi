@@ -112,7 +112,7 @@ func goldenSource() domain.LibrarySource {
 
 func goldenTime() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) }
 
-func (goldenLibrary) Movies(context.Context, int, int) (library.Page, error) {
+func (goldenLibrary) Movies(context.Context, int, int, int) (library.Page, error) {
 	source := goldenSource()
 	cover, poster, javdbID := "/api/library/artwork/aa.jpg", "/api/library/artwork/bb.jpg", "movie-exact"
 	return library.Page{Directories: []domain.LibraryDirectory{source.Directory}, Total: 2, Page: 1, HasMore: false, Movies: []library.Movie{
@@ -123,6 +123,14 @@ func (goldenLibrary) Movies(context.Context, int, int) (library.Page, error) {
 			Actors: []library.Entity{{ID: "actor-1", Name: "Actor"}}, Tags: []library.Tag{{ID: 3, Provider: "javdb", SourceID: "tag-1", Name: "Tag"}},
 			ScrapeStatus: movie.ScrapeStatusDone},
 		{ID: 8, Code: "ZZZ-999", Actors: []library.Entity{}, Tags: []library.Tag{}, ScrapeStatus: movie.ScrapeStatusFailed},
+	}}, nil
+}
+
+func (goldenLibrary) Actors(context.Context, int, int) (library.ActorPage, error) {
+	nameZht, avatar := "演員", "https://avatar.example/actor-1.jpg"
+	return library.ActorPage{Total: 2, Page: 1, HasMore: false, Actors: []library.Actor{
+		{ID: 5, Provider: "javdb", SourceID: "actor-1", Name: "Actor", NameZht: &nameZht, Avatar: &avatar, MovieCount: 12},
+		{ID: 6, Provider: "nfo", SourceID: "ZZZ-999:0", Name: "Unidentified", MovieCount: 1},
 	}}, nil
 }
 
@@ -235,6 +243,7 @@ func TestResponseContractsMatchGoldenFiles(t *testing.T) {
 			body: `{"movies":[{"id":"movie-exact","code":"ABP-123"},{"id":"movie-near","code":"ABP-124"},{"id":"movie-saving","code":"SONE-001"}]}`},
 		{name: "discover_tags", method: http.MethodGet, path: "/api/discover/tags?zone=censored"},
 		{name: "library_movies", method: http.MethodGet, path: "/api/library/movies"},
+		{name: "library_actors", method: http.MethodGet, path: "/api/library/actors"},
 		{name: "tasks", method: http.MethodGet, path: "/api/tasks"},
 		{name: "offline_tasks", method: http.MethodGet, path: "/api/offline/tasks"},
 		{name: "subscriptions", method: http.MethodGet, path: "/api/subscriptions"},

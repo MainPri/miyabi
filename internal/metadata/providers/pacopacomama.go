@@ -117,7 +117,7 @@ func pacopacomamaMetadata(source pacopacomamaMovie) domain.MovieMetadata {
 	for _, actorID := range source.ActorID {
 		id := strconv.Itoa(actorID)
 		if name := source.ActressesList[id].name(); name != "" && !actors[id] {
-			m.Actors = append(m.Actors, domain.Actor{Provider: "pacopacomama", ID: id, Name: name})
+			m.Actors = append(m.Actors, domain.Actor{Provider: "pacopacomama", ID: id, Name: name, Gender: "female"})
 			actors[id] = true
 		}
 	}

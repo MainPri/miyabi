@@ -41,7 +41,7 @@ func TestLibraryListingAndMatchingShareLocalAndMountedScope(t *testing.T) {
 			}
 			visible = visible[:2]
 		}
-		page, err := lib.Movies(ctx, 1, 20)
+		page, err := lib.Movies(ctx, 1, 20, 0)
 		if err != nil || page.Total != len(visible) || len(page.Directories) != 0 != mounted {
 			t.Fatalf("mounted=%t page=%+v error=%v", mounted, page, err)
 		}
@@ -103,7 +103,7 @@ func TestLibraryPageLoadsCardMetadataWithScopedCounts(t *testing.T) {
 			return next.Query(ctx, query)
 		})
 	}))
-	page, err := lib.Movies(ctx, 1, 20)
+	page, err := lib.Movies(ctx, 1, 20, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,15 +152,15 @@ func TestLibraryPageLoadsCardMetadataWithScopedCounts(t *testing.T) {
 			}
 		}
 	}
-	first, err := lib.Movies(ctx, 1, 1)
+	first, err := lib.Movies(ctx, 1, 1, 0)
 	if err != nil || len(first.Movies) != 1 || !first.HasMore {
 		t.Fatalf("first page: %#v, %v", first, err)
 	}
-	second, err := lib.Movies(ctx, 2, 1)
+	second, err := lib.Movies(ctx, 2, 1, 0)
 	if err != nil || len(second.Movies) != 1 || second.HasMore || first.Movies[0].ID == second.Movies[0].ID {
 		t.Fatalf("second page: %#v, %v", second, err)
 	}
-	if beyond, err := lib.Movies(ctx, 3, 1); err != nil || beyond.Movies == nil || len(beyond.Movies) != 0 || beyond.HasMore {
+	if beyond, err := lib.Movies(ctx, 3, 1, 0); err != nil || beyond.Movies == nil || len(beyond.Movies) != 0 || beyond.HasMore {
 		t.Fatalf("out-of-range page: %#v, %v", beyond, err)
 	}
 }
@@ -179,7 +179,7 @@ func TestLibraryPagesContainTwentyDistinctMoviesAndTheRemainder(t *testing.T) {
 	seen := make(map[int]bool)
 	previousID := 0
 	for pageNumber, count := range []int{20, 1, 0} {
-		page, err := lib.Movies(ctx, pageNumber+1, 20)
+		page, err := lib.Movies(ctx, pageNumber+1, 20, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,7 +205,7 @@ func TestLibraryPageKeepsEmptyAndUnmatchedSourcesUsable(t *testing.T) {
 			lib.database.File.Create().SetFileID("unmatched").SetName("recording.mp4").SetSize(1024).
 				SetAccountID("100").SetRootID("10").ExecX(t.Context())
 		}
-		page, err := lib.Movies(t.Context(), 1, 24)
+		page, err := lib.Movies(t.Context(), 1, 24, 0)
 		if err != nil || page.Total != 0 || page.Movies == nil || len(page.Movies) != 0 || page.HasMore {
 			t.Fatalf("empty/unmatched source: %#v, %v", page, err)
 		}

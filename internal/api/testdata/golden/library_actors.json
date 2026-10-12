@@ -1,0 +1,23 @@
+{
+  "actors": [
+    {
+      "id": 5,
+      "provider": "javdb",
+      "source_id": "actor-1",
+      "name": "Actor",
+      "name_zht": "演員",
+      "avatar": "https://avatar.example/actor-1.jpg",
+      "movie_count": 12
+    },
+    {
+      "id": 6,
+      "provider": "nfo",
+      "source_id": "ZZZ-999:0",
+      "name": "Unidentified",
+      "movie_count": 1
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "has_more": false
+}

@@ -73,7 +73,7 @@ func BenchmarkLibraryPage(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		page, err := lib.Movies(b.Context(), 1, 24)
+		page, err := lib.Movies(b.Context(), 1, 24, 0)
 		if err != nil {
 			b.Fatal(err)
 		}

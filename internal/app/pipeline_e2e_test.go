@@ -513,7 +513,7 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 		t.Fatalf("movie states = %+v, %v", states, err)
 	}
 
-	page, err := fixture.library.Movies(ctx, 1, 20)
+	page, err := fixture.library.Movies(ctx, 1, 20, 0)
 	if err != nil || page.Total != 1 || len(page.Movies) != 1 || page.Movies[0].Fanart != artwork.Fanart || page.Movies[0].ScrapeStatus != movie.ScrapeStatusDone {
 		t.Fatalf("library page = %+v, %v", page, err)
 	}
@@ -666,7 +666,7 @@ func TestPipelineRemovesMovieWhenDeletedFrom115(t *testing.T) {
 	}
 	fixture.runQueue(t)
 
-	page, err := fixture.library.Movies(ctx, 1, 20)
+	page, err := fixture.library.Movies(ctx, 1, 20, 0)
 	if err != nil || page.Total != 1 || len(page.Movies) != 1 {
 		t.Fatalf("initial library page = %+v, %v", page, err)
 	}
@@ -689,7 +689,7 @@ func TestPipelineRemovesMovieWhenDeletedFrom115(t *testing.T) {
 	fixture.runQueue(t)
 
 	// 4. Verify library movies page
-	page, err = fixture.library.Movies(ctx, 1, 20)
+	page, err = fixture.library.Movies(ctx, 1, 20, 0)
 	if err != nil || page.Total != 0 || len(page.Movies) != 0 {
 		t.Fatalf("after delete library page = %+v, %v", page, err)
 	}

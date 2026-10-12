@@ -95,7 +95,7 @@ func TestPacopacomamaFetchesConfirmedMetadataAndPublicOriginals(t *testing.T) {
 	if d.ReleaseDate != "2026-01-01" || d.Duration != 61 || d.Rating != 4.5 || d.RatingMax != 5 || d.RatingSource != "pacopacomama" {
 		t.Fatalf("wrong metadata: %+v", d)
 	}
-	if len(d.Actors) != 1 || d.Actors[0].ID != "12" || d.Actors[0].Name != "Actor" || d.Actors[0].Provider != "pacopacomama" ||
+	if len(d.Actors) != 1 || d.Actors[0].ID != "12" || d.Actors[0].Name != "Actor" || d.Actors[0].Provider != "pacopacomama" || d.Actors[0].Gender != "female" ||
 		d.Series == nil || d.Series.ID != "627" || d.Maker == nil || d.Maker.Name != "Pacopacomama" {
 		t.Fatalf("wrong entities: %+v", d)
 	}

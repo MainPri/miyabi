@@ -41,7 +41,7 @@ func TestScanCombinesPartsPreservesMetadataAndRetainsUnmatchedFiles(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	page, err := lib.Movies(ctx, 1, 24)
+	page, err := lib.Movies(ctx, 1, 24, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestScanKeepsLetterSerialsDistinctAndDoesNotExtractPartialNumbers(t *testin
 	}, &payload); err != nil {
 		t.Fatal(err)
 	}
-	page, err := lib.Movies(ctx, 1, 24)
+	page, err := lib.Movies(ctx, 1, 24, 0)
 	if err != nil || page.Total != 2 || lib.database.File.Query().Where(file.MovieIDIsNil()).CountX(ctx) != 1 {
 		t.Fatalf("letter serials were lost or merged: %#v, %v", page, err)
 	}
@@ -113,7 +113,7 @@ func TestScanCombinesCatalogueAliasesAndReplacesFailedLegacyIndex(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	page, err := lib.Movies(ctx, 1, 24)
+	page, err := lib.Movies(ctx, 1, 24, 0)
 	if err != nil || page.Total != 1 || len(page.Movies) != 1 {
 		t.Fatalf("catalogue aliases created duplicate movies: %#v, %v", page, err)
 	}

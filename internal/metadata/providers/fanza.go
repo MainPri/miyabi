@@ -294,7 +294,7 @@ func fanzaMetadata(source fanzaMovie, rating float64) domain.MovieMetadata {
 	}
 	if len(m.Actors) == 0 && source.AmateurActress != nil && source.AmateurActress.Name != "" {
 		a := source.AmateurActress
-		m.Actors = append(m.Actors, domain.Actor{Provider: "fanza", ID: a.ID, Name: a.Name, Avatar: a.ImageURL, Gender: "unknown"})
+		m.Actors = append(m.Actors, domain.Actor{Provider: "fanza", ID: a.ID, Name: a.Name, Avatar: a.ImageURL, Gender: "female"})
 	}
 	if source.Maker != nil {
 		m.Maker = &domain.Maker{Provider: "fanza", ID: source.Maker.ID, Name: source.Maker.Name}

@@ -73,7 +73,7 @@ func TestLibraryListingUsesSortIndexAndKeepsScopeAndOrder(t *testing.T) {
 		}
 		var got []int
 		for page := 1; page <= (len(want)+1)/2; page++ {
-			result, err := service.Movies(ctx, page, 2)
+			result, err := service.Movies(ctx, page, 2, 0)
 			if err != nil || result.Total != len(want) || result.HasMore != (page*2 < len(want)) {
 				t.Fatalf("mounted=%t page=%d result=%+v err=%v", mounted, page, result, err)
 			}

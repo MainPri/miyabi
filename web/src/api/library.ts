@@ -9,8 +9,19 @@ import { taskKeys, type ScanTask, type Task } from '@/api/tasks'
 import { inDirectories } from '@/lib/source'
 
 export const LIBRARY_PAGE_SIZE = 20
+export const ACTORS_PAGE_SIZE = 24
 
 export type LibraryEntity = { provider?: string; id?: string; name: string }
+
+export type LibraryActor = {
+  id: number
+  provider: string
+  source_id: string
+  name: string
+  name_zht?: string
+  avatar?: string
+  movie_count: number
+}
 
 export type LibraryMovie = {
   id: number
@@ -31,9 +42,16 @@ export type LibraryMovie = {
   scrape_status: 'pending' | 'done' | 'failed'
 }
 
-type LibraryPage = {
+export type LibraryPage = {
   directories?: Array<{ id: string; name: string; path: string }>
   movies: LibraryMovie[]
+  total: number
+  page: number
+  has_more: boolean
+}
+
+export type LibraryActorsPage = {
+  actors: LibraryActor[]
   total: number
   page: number
   has_more: boolean
@@ -42,7 +60,8 @@ type LibraryPage = {
 export const libraryKeys = {
   all: ['library'] as const,
   detail: (id: number) => ['library', 'detail', id] as const,
-  movies: (page: number) => ['library', 'movies', page] as const
+  movies: (page: number, actorID = 0) => ['library', 'movies', page, actorID] as const,
+  actors: (page: number) => ['library', 'actors', page] as const
 }
 
 export type LibraryMovieDetail = Omit<DiscoverMovieDetail, 'release_status'> & {
@@ -58,11 +77,23 @@ export function useLibraryMovie(id: number) {
   })
 }
 
-export function useLibraryMovies(page: number) {
+export function useLibraryMovies(page: number, actorID?: number) {
   return useQuery({
-    queryKey: libraryKeys.movies(page),
+    queryKey: libraryKeys.movies(page, actorID),
     queryFn: ({ signal }) =>
-      apiGet<LibraryPage>('/api/library/movies', { page, limit: LIBRARY_PAGE_SIZE }, signal)
+      apiGet<LibraryPage>(
+        '/api/library/movies',
+        { page, limit: LIBRARY_PAGE_SIZE, actor_id: actorID },
+        signal
+      )
+  })
+}
+
+export function useLibraryActors(page: number) {
+  return useQuery({
+    queryKey: libraryKeys.actors(page),
+    queryFn: ({ signal }) =>
+      apiGet<LibraryActorsPage>('/api/library/actors', { page, limit: ACTORS_PAGE_SIZE }, signal)
   })
 }
 
@@ -70,8 +101,10 @@ export function useStartLibraryScan() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ rebuild, directoryID }: { rebuild: boolean; directoryID?: string }) =>
-      apiPost<ScanTask[]>(rebuild ? '/api/library/rebuild' : '/api/library/scan',
-        directoryID ? { directory_id: directoryID } : {}),
+      apiPost<ScanTask[]>(
+        rebuild ? '/api/library/rebuild' : '/api/library/scan',
+        directoryID ? { directory_id: directoryID } : {}
+      ),
     onMutate: () => queryClient.getQueryData<Task[]>(taskKeys.all),
     onSuccess: (tasks, _input, previous) => {
       for (const task of tasks) cacheScanTask(queryClient, task, previous)

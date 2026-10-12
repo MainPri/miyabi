@@ -11,7 +11,8 @@ import (
 
 type LibraryManager interface {
 	ViewedManager
-	Movies(context.Context, int, int) (lib.Page, error)
+	Movies(context.Context, int, int, int) (lib.Page, error)
+	Actors(context.Context, int, int) (lib.ActorPage, error)
 	Movie(context.Context, int) (lib.MovieDetail, error)
 	Preview(context.Context, int, int) (domain.ImageCandidate, error)
 	StartScan(context.Context, string) ([]domain.TaskInfo, error)
@@ -114,8 +115,9 @@ func libraryArtworkHandler(artwork ArtworkReader) gin.HandlerFunc {
 }
 
 type libraryPageQuery struct {
-	Page  int `form:"page,default=1" binding:"min=1"`
-	Limit int `form:"limit,default=20" binding:"min=1,max=100"`
+	Page    int `form:"page,default=1" binding:"min=1"`
+	Limit   int `form:"limit,default=20" binding:"min=1,max=100"`
+	ActorID int `form:"actor_id" binding:"min=0"`
 }
 
 func libraryMoviesHandler(library LibraryManager) gin.HandlerFunc {
@@ -124,8 +126,19 @@ func libraryMoviesHandler(library LibraryManager) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		movies, err := library.Movies(c.Request.Context(), query.Page, query.Limit)
+		movies, err := library.Movies(c.Request.Context(), query.Page, query.Limit, query.ActorID)
 		respond(c, movies, err)
+	}
+}
+
+func libraryActorsHandler(library LibraryManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query, ok := bindQuery[libraryPageQuery](c)
+		if !ok {
+			return
+		}
+		actors, err := library.Actors(c.Request.Context(), query.Page, query.Limit)
+		respond(c, actors, err)
 	}
 }
 
